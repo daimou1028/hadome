@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -348,8 +348,10 @@
               "browser_open",
               "browser_read",
               "browser_click",
+              "browser_set",
               "browser_shot",
               "browser_type",
+              "browser_close",
               "browser_scroll",
               "browser_save",
               "spawn_agents",
@@ -722,6 +724,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@vscode/codicons": "^0.0.46-24",
+    "playwright-core": "1.63.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "ws": "^8.18.0"

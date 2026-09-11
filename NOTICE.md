@@ -97,6 +97,7 @@ by [`LICENSE`](LICENSE) (AGPL-3.0-or-later).
 | `path-key` | 3.1.1 | MIT | [`licenses/path-key.txt`](licenses/path-key.txt) |
 | `path-to-regexp` | 8.4.2 | MIT | [`licenses/path-to-regexp.txt`](licenses/path-to-regexp.txt) |
 | `pkce-challenge` | 5.0.1 | MIT | [`licenses/pkce-challenge.txt`](licenses/pkce-challenge.txt) |
+| `playwright-core` | 1.63.0 | Apache-2.0 | [`licenses/playwright-core.txt`](licenses/playwright-core.txt) |
 | `property-information` | 7.2.0 | MIT | [`licenses/property-information.txt`](licenses/property-information.txt) |
 | `proxy-addr` | 2.0.7 | MIT | [`licenses/proxy-addr.txt`](licenses/proxy-addr.txt) |
 | `qs` | 6.15.3 | BSD-3-Clause | [`licenses/qs.txt`](licenses/qs.txt) |

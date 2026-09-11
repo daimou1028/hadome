@@ -756,6 +756,29 @@ function makeTools({
   if (browserProfile) process.env.BRIDGE_BROWSER_PROFILE = browserProfile;
 
   if (browserPath) process.env.BRIDGE_BROWSER_PATH = browserPath;
+
+  const 目印を読む = (call) => {
+    const 目印 = {
+      role: String(call.role || '').trim(),
+      name: String(call.name || '').trim(),
+      selector: String(call.selector || '').trim(),
+      text: String(call.text || '').trim(),
+      key: String(call.key || '').trim(),
+    };
+    if (!目印.role && !目印.selector && !目印.text && !目印.key) {
+      throw new ToolError(
+        'role（と name）か、selector か、text を渡してください。\n' +
+          'browser_read の写しに出ている通りに書けます（例: role="combobox", name="月"）。',
+        'tool.browserNoTarget'
+      );
+    }
+    return 目印;
+  };
+  const 目印の字 = (目印) =>
+    目印.role
+      ? `${目印.role}${目印.name ? ` "${目印.name}"` : ''}`
+      : 目印.selector || 目印.text || 目印.key || '(焦点)';
+
   const 開いたタブ = new Map(openTabsIn || []);
 
   let いま見ているタブ = null;
@@ -905,23 +928,29 @@ function makeTools({
           (r.imagesTotal > 絵.length ? `\n  （ほかに ${r.imagesTotal - 絵.length} 枚 あります）` : '')
         : '';
 
+      const 写しの行 = r.写しが読めない
+        ? `\n\n作り（役目と名前）: 読めませんでした（${r.写しが読めない}）`
+        : r.写し
+          ? '\n\n作り（browser_set / browser_click の role と name は ここから写せます）:\n' +
+            r.写し +
+            (r.写しを切った ? `\n  （長いので ${r.写しを切った} 字 切りました）` : '')
+          : '';
+      const 本文の行 = r.本文が読めない
+        ? `読めませんでした（${r.本文が読めない}）`
+        : `${r.text || ''}${r.本文を切った ? `\n  （長いので ${r.本文を切った} 字 切りました）` : ''}`;
       const body =
-        `題名: ${r.title || '(題なし)'}\n場所: ${r.url}\n\n本文:\n${r.text || ''}${絵の行}`;
+        `題名: ${r.title || '(題なし)'}\n場所: ${r.url}${写しの行}\n\n本文:\n${本文の行}${絵の行}`;
       return { ok: true, target: r.url || id, ...withFull(body, clipMiddle(body)) };
     },
 
     async browser_click(call) {
 
-      const selector = String(call.selector || '').trim();
-      const text = String(call.text || '').trim();
-      if (!selector && !text) {
-        throw new ToolError('selector か text のどちらかを渡してください', 'tool.browserNoTarget');
-      }
+      const 目印 = 目印を読む(call);
       const id = await タブを決める(call.tab);
 
       const いま = await browser.targetOf(id);
-      await 站の関門((いま && いま.url) || '', `browser_click ${selector || text}`);
-      const r = await browser.click(id, { selector, text });
+      await 站の関門((いま && いま.url) || '', `browser_click ${目印の字(目印)}`);
+      const r = await browser.click(id, 目印);
       if (!r || !r.ok) {
 
         throw new ToolError(
@@ -931,7 +960,36 @@ function makeTools({
           { why: (r && r.why) || '', n: String((r && r.n) || 0) }
         );
       }
-      return { ok: true, target: r.label || selector || text, output: `押しました: ${r.label || selector || text}` };
+      return {
+        ok: true,
+        target: r.label || 目印の字(目印),
+        output: `押しました: ${r.label || 目印の字(目印)}`,
+      };
+    },
+
+    async browser_set(call) {
+      const 目印 = 目印を読む(call);
+      if (call.value === undefined || call.value === null) {
+        throw new ToolError('value を渡してください（勾は真偽、選ぶ欄は見えている字）', 'tool.browserNoValue');
+      }
+      const id = await タブを決める(call.tab);
+
+      const いま = await browser.targetOf(id);
+      await 站の関門((いま && いま.url) || '', `browser_set ${目印の字(目印)}`);
+      const r = await browser.set(id, 目印, call.value);
+      if (!r || !r.ok) {
+        throw new ToolError(
+          `値を入れられませんでした: ${(r && r.why) || '理由が返りません'}（当たり ${(r && r.n) || 0} 件）\n` +
+            'browser_read で頁を読んで、写しに出ている役目（role）と名前（name）をそのまま渡してください。',
+          'tool.browserSetFail',
+          { why: (r && r.why) || '', n: String((r && r.n) || 0) }
+        );
+      }
+      return {
+        ok: true,
+        target: 目印の字(目印),
+        output: `入れました。いま入っているのは: ${JSON.stringify(r.value || '')}`,
+      };
     },
 
     async browser_shot(call) {
@@ -973,17 +1031,25 @@ function makeTools({
 
       const text = String(call.text || '');
       const key = String(call.key || '').trim();
-      const selector = String(call.selector || '').trim();
       if (!text && !key) {
         throw new ToolError('text か key のどちらかを渡してください', 'tool.browserNoText');
       }
+
+      const 目印 = {
+        role: String(call.role || '').trim(),
+        name: String(call.name || '').trim(),
+        selector: String(call.selector || '').trim(),
+        text,
+        key,
+      };
+      const 指す = 目印.role || 目印.selector ? 目印の字(目印) : '(いま焦点が在る所)';
       const id = await タブを決める(call.tab);
 
       const いま = await browser.targetOf(id);
-      await 站の関門((いま && いま.url) || '', `browser_type ${selector || '(いま焦点が在る所)'}`);
+      await 站の関門((いま && いま.url) || '', `browser_type ${指す}`);
       let r;
       try {
-        r = await browser.type(id, { selector, text, key });
+        r = await browser.type(id, 目印);
       } catch (e) {
         throw new ToolError(e.message, 'tool.browserTypeFail', { why: e.message });
       }
@@ -998,7 +1064,7 @@ function makeTools({
 
       return {
         ok: true,
-        target: selector || key || '(焦点)',
+        target: 指す,
         output:
           `打ちました${key ? `（鍵: ${key}）` : ''}。` +
           `いまその欄に入っているのは: ${JSON.stringify(r.value || '')}`,

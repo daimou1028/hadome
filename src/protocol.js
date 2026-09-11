@@ -556,7 +556,24 @@ function buildInstruction({
     readOnly || 切った('browser_read')
       ? null
       : '              read / click / save は**最後に開いた頁**に効きます（tab で指せます）',
-    readOnly || 切った('browser_click') ? null : '  browser_click {"text":"次へ"}                      押す（selector でも指せます）',
+    readOnly || 切った('browser_read')
+      ? null
+      : '              返るのは無障礙樹です。`combobox "月"` の様に**役目と名前**が出るので、',
+    readOnly || 切った('browser_read')
+      ? null
+      : '              そのまま role と name に書き写せます（選び字を当てなくてよい）',
+    readOnly || 切った('browser_click')
+      ? null
+      : '  browser_click {"role":"button","name":"次へ"}       押す（text / selector でも指せます）',
+    readOnly || 切った('browser_set')
+      ? null
+      : '  browser_set {"role":"combobox","name":"月","value":"3 月"}  値を入れる',
+    readOnly || 切った('browser_set')
+      ? null
+      : '              **選ぶ欄・勾（checkbox）・丸（radio）はこちら。**押しても打っても入りません',
+    readOnly || 切った('browser_set')
+      ? null
+      : '              勾と丸は value に true / false、選ぶ欄は見えている字をそのまま',
     readOnly || 切った('browser_shot') ? null : '  browser_shot {}                                    画面を撮る。**次の便りに添えるので見えます**',
     readOnly || 切った('browser_shot')
       ? null

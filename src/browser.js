@@ -3,6 +3,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const WebSocket = require('ws');
 
+const pw = require('./pwpage');
+
 const PORT = Number(process.env.BRIDGE_BROWSER_PORT || 9444);
 
 const OWN = new Set(['https://chatgpt.com', 'https://chat.openai.com']);
@@ -57,6 +59,19 @@ function 口を握っている命令列(port) {
   }
 }
 
+function 引数として合うか(命令列, 道) {
+  for (const 印 of [`--user-data-dir=${道}`, `--user-data-dir="${道}"`, `--user-data-dir='${道}'`]) {
+    let i = 命令列.indexOf(印);
+    while (i >= 0) {
+      const 次 = 命令列.slice(i + 印.length, i + 印.length + 1);
+
+      if (次 === '' || 次 === ' ' || 次 === '"' || 次 === "'") return true;
+      i = 命令列.indexOf(印, i + 1);
+    }
+  }
+  return false;
+}
+
 function 隔離した口か(port = PORT) {
   if (確かめた口.has(port)) return 確かめた口.get(port);
   const 命令列 = 口を握っている命令列(port);
@@ -70,8 +85,8 @@ function 隔離した口か(port = PORT) {
         '読めない口には触りません。';
   if (命令列 !== 空 && 命令列 !== 読めない) {
 
-    const 印 = `--user-data-dir=${隔離した設定ファイルの道()}`;
-    if (命令列.includes(印) || 命令列.includes(`--user-data-dir="${隔離した設定ファイルの道()}"`)) {
+    const 道 = 隔離した設定ファイルの道();
+    if (引数として合うか(命令列, 道)) {
       良い = true;
       なぜ = '';
     } else if (!/--user-data-dir/.test(命令列)) {
@@ -356,44 +371,32 @@ async function evaluate(targetId, expression, { port = PORT, timeoutMs = 30000 }
 }
 
 const 画像の上限 = 30;
-const READ = `(() => {
-  const 本文 = document.body ? document.body.innerText : '';
-  // 場所は絶対の形にする（相手がそのまま browser_save へ渡せるように）
-  const 絵 = [...document.images]
-    .map((im) => ({ src: im.currentSrc || im.src || '', alt: (im.alt || '').slice(0, 60), w: im.naturalWidth, h: im.naturalHeight }))
-    .filter((x) => /^https?:/i.test(x.src));
-  const 全部 = 絵.length;
-  return {
-    url: location.href,
-    title: document.title,
-    text: 本文,
-    images: 絵.slice(0, ${画像の上限}),
-    imagesTotal: 全部,
-  };
-})()`;
 
-async function read(targetId, opts = {}) {
-  const r = await evaluate(targetId, READ, opts);
-  return r || { url: '', title: '', text: '', images: [], imagesTotal: 0 };
+async function 確かな頁(targetId, port = PORT) {
+
+  if (!pw.繋がっているか(port)) 確かめた口.delete(port);
+  await 用意する(port);
+  await pw.繋ぐ(port, 窓を出させる);
+  const page = await pw.頁(targetId, port);
+  if (!page) throw new Error(`そのタブはもう在りません: ${targetId}`);
+  const u = page.url();
+  if (isOwnSite(u)) throw new Error(`この站には触れません: ${originOf(u) || u}`);
+  return page;
 }
 
-async function click(targetId, { selector = '', text = '' } = {}, opts = {}) {
-  const 選び = JSON.stringify(String(selector || ''));
-  const 字 = JSON.stringify(String(text || ''));
-  const EXPR = `(() => {
-    const sel = ${選び}, want = ${字};
-    let 当たり = [];
-    if (sel) 当たり = [...document.querySelectorAll(sel)];
-    else if (want) {
-      const 押せる = [...document.querySelectorAll('a,button,input,[role=button],[onclick]')];
-      当たり = 押せる.filter((e) => (e.innerText || e.value || '').trim().includes(want));
-    }
-    if (!当たり.length) return { ok: false, why: 'みつかりません', n: 0 };
-    if (当たり.length > 1) return { ok: false, why: 'いくつも当たります', n: 当たり.length };
-    当たり[0].click();
-    return { ok: true, n: 1, label: (当たり[0].innerText || '').trim().slice(0, 80) };
-  })()`;
-  return evaluate(targetId, EXPR, opts);
+async function read(targetId, opts = {}) {
+  const page = await 確かな頁(targetId, opts.port || PORT);
+  return pw.読む(page, { 画像の上限 });
+}
+
+async function click(targetId, 目印 = {}, opts = {}) {
+  const page = await 確かな頁(targetId, opts.port || PORT);
+  return pw.押す(page, 目印);
+}
+
+async function set(targetId, 目印 = {}, 値, opts = {}) {
+  const page = await 確かな頁(targetId, opts.port || PORT);
+  return pw.値を入れる(page, 目印, 値);
 }
 
 async function fetchBytes(targetId, url, opts = {}) {
@@ -435,54 +438,13 @@ async function shot(targetId, { port = PORT, full = false, timeoutMs = 30000 } =
   }
 }
 
-async function type(targetId, { selector = '', text = '', key = '' } = {}, { port = PORT, timeoutMs = 30000 } = {}) {
-  const t = await 確かなタブ(targetId, port);
-  if (!t) throw new Error(`そのタブはもう在りません: ${targetId}`);
-  if (isOwnSite(t.url)) throw new Error(`この站には触れません: ${originOf(t.url) || t.url}`);
-  const c = await connect(t.webSocketDebuggerUrl, { timeoutMs });
-  try {
-
-    if (selector) {
-      const r = await c.send('Runtime.evaluate', {
-        expression: `(() => {
-          const 当たり = [...document.querySelectorAll(${JSON.stringify(selector)})];
-          if (!当たり.length) return { ok: false, why: 'みつかりません', n: 0 };
-          if (当たり.length > 1) return { ok: false, why: 'いくつも当たります', n: 当たり.length };
-          const el = 当たり[0];
-          el.focus();
-          // 元から入っていた字は消す（足し書きは驚きが大きい）
-          if ('value' in el) el.value = '';
-          return { ok: true, n: 1, tag: el.tagName };
-        })()`,
-        returnByValue: true,
-      });
-      const v = r && r.result && r.result.value;
-      if (!v || !v.ok) return v || { ok: false, why: '指せません', n: 0 };
-    }
-
-    if (text) await c.send('Input.insertText', { text: String(text) });
-
-    if (key) {
-      const 鍵 = KEYS[key];
-      if (!鍵) throw new Error(`知らない鍵です: ${key}（使えるのは ${Object.keys(KEYS).join(' / ')}）`);
-      for (const type2 of ['keyDown', 'keyUp']) {
-        await c.send('Input.dispatchKeyEvent', { type: type2, ...鍵 });
-      }
-    }
-
-    const 後 = await c.send('Runtime.evaluate', {
-      expression: `(() => {
-        const el = document.activeElement;
-        if (!el) return { value: '', tag: '' };
-        return { value: String(el.value != null ? el.value : (el.innerText || '')).slice(0, 200), tag: el.tagName };
-      })()`,
-      returnByValue: true,
-    });
-    const v = (後 && 後.result && 後.result.value) || {};
-    return { ok: true, value: v.value || '', tag: v.tag || '' };
-  } finally {
-    c.close();
+async function type(targetId, 目印 = {}, opts = {}) {
+  const page = await 確かな頁(targetId, opts.port || PORT);
+  const 鍵 = String(目印.key || '');
+  if (鍵 && !KEYS[鍵]) {
+    throw new Error(`知らない鍵です: ${鍵}（使えるのは ${Object.keys(KEYS).join(' / ')}）`);
   }
+  return pw.打つ(page, 目印, 目印.text, 鍵);
 }
 
 const KEYS = {
@@ -495,13 +457,18 @@ const KEYS = {
 };
 
 async function scroll(targetId, { dy = 0, to = '' } = {}, opts = {}) {
-  const 式 = `(() => {
-    const 前 = window.scrollY;
-    ${to === 'top' ? 'window.scrollTo(0, 0);' : to === 'bottom' ? 'window.scrollTo(0, document.body.scrollHeight);' : `window.scrollBy(0, ${Number(dy) || 0});`}
-    const 後 = window.scrollY;
-    return { from: 前, to: 後, moved: 後 - 前, height: document.body.scrollHeight, view: window.innerHeight };
-  })()`;
-  return evaluate(targetId, 式, opts);
+  const page = await 確かな頁(targetId, opts.port || PORT);
+  return page.evaluate(
+    ({ dy: d, to: t }) => {
+      const 前 = window.scrollY;
+      if (t === 'top') window.scrollTo(0, 0);
+      else if (t === 'bottom') window.scrollTo(0, document.body.scrollHeight);
+      else window.scrollBy(0, Number(d) || 0);
+      const 後 = window.scrollY;
+      return { from: 前, to: 後, moved: 後 - 前, height: document.body.scrollHeight, view: window.innerHeight };
+    },
+    { dy, to }
+  );
 }
 
 async function close(targetId, { port = PORT } = {}) {
@@ -519,4 +486,4 @@ async function close(targetId, { port = PORT } = {}) {
   }
 }
 
-module.exports = { PORT, originOf, isOwnSite, open, read, click, shot, type, scroll, fetchBytes, close, evaluate, targetOf, KEYS };
+module.exports = { PORT, originOf, isOwnSite, open, read, click, set, shot, type, scroll, fetchBytes, close, evaluate, targetOf, KEYS, 窓を出させる, 用意する };
