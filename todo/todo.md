@@ -4,7 +4,7 @@
 
 | ID | 狀態 | 類型 | 需求 | 說明 | 重試次數 | 暫停原因 |
 |----|------|------|------|------|----------|----------|
-| T-005 | 待執行 | 實作 | 拆解 handleRun() 巨型函式 | 詳見規格書 todo/spec/拆解handleRun.md | 0 | - |
+| T-005 | ✅ 完成 | 實作 | 拆解 handleRun() 巨型函式 | 詳見規格書 todo/spec/拆解handleRun.md | 0 | - |
 | T-006 | 待執行 | 實作 | 拆解 makeTools() 巨大物件 | 詳見規格書 todo/spec/拆解makeTools.md | 0 | - |
 | T-007 | 待執行 | 實作 | 補上測試/lint/CI 基礎建設 | 詳見規格書 todo/spec/測試lint-CI基礎建設.md | 0 | - |
 
