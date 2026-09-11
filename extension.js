@@ -61,6 +61,7 @@ const SECONDARY_SINCE = { major: 1, minor: 106 };
 
 const BEFORE_SCHEME = 'chatgpt-bridge-before';
 const beforeStore = new Map();
+const BEFORE_KEEP = 200;
 
 const beforeProvider = {
   provideTextDocumentContent(uri) {
@@ -1016,6 +1017,7 @@ async function handleRun(task) {
         if (r.ok && r.changed) {
           diffKey = `/${Date.now()}-${diffSeq++}/${r.changed.path}`;
           beforeStore.set(diffKey, r.changed.before);
+          while (beforeStore.size > BEFORE_KEEP) beforeStore.delete(beforeStore.keys().next().value);
 
           const abs = path.join(s.root, r.changed.path);
           if (!originStore.has(abs)) originStore.set(abs, r.changed.before);

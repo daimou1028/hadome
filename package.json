@@ -714,7 +714,7 @@
     "build": "node tools/build-webview.js",
     "watch": "node tools/build-webview.js --watch",
     "prepare": "node tools/build-webview.js && node tools/install-git-hooks.js",
-    "package": "npm run build && vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links",
+    "package": "node tools/build-webview.js --production && vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links",
     "package:chrome": "node tools/package-chrome.js",
     "hooks:install": "node tools/install-git-hooks.js",
     "browser": "node tools/bridge-browser.js"

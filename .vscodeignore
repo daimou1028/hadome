@@ -17,3 +17,5 @@ node_modules/@vscode/codicons/src/**
 prior-art/**
 
 media/panel-*.png
+
+webview/dist/*.map

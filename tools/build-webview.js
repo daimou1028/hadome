@@ -4,6 +4,7 @@ const path = require('path');
 const esbuild = require('esbuild');
 
 const watch = process.argv.includes('--watch');
+const production = process.argv.includes('--production');
 
 const opts = {
   entryPoints: [path.join(__dirname, '..', 'webview', 'src', 'index.js')],
@@ -14,17 +15,12 @@ const opts = {
   target: ['chrome120'],
 
   jsx: 'automatic',
-  loader: { '.js': 'jsx' },
-
-  define: { 'process.env.NODE_ENV': '"development"' },
-
-  jsx: 'automatic',
   loader: { '.js': 'jsx', '.jsx': 'jsx' },
 
-  define: { 'process.env.NODE_ENV': '"development"' },
+  define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
 
-  minify: false,
-  sourcemap: false,
+  minify: production,
+  sourcemap: !production,
   logLevel: 'info',
 };
 

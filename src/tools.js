@@ -270,7 +270,7 @@ function readIgnoreRules(root) {
     .map(globToRegExp);
 }
 
-function whyBlocked(root, rel, { protectSecrets = true } = {}) {
+function whyBlocked(root, rel, { protectSecrets = true, ignoreRules = null } = {}) {
   const p = String(rel).replace(/\\/g, '/');
 
   if (isDangerousPath(p)) {
@@ -283,7 +283,7 @@ function whyBlocked(root, rel, { protectSecrets = true } = {}) {
   if (protectSecrets && SECRET_PATTERNS.some((re) => re.test(p))) {
     return '秘密が入っていそうなファイルなので中身を渡しません（設定 chatgptBridge.protectSecrets）';
   }
-  for (const re of readIgnoreRules(root)) {
+  for (const re of ignoreRules || readIgnoreRules(root)) {
     if (re.test(p)) return '.bridgeignore で除いてあるので中身を渡しません';
   }
   return null;
@@ -1300,6 +1300,7 @@ function makeTools({
       const 起点 = await pathFor(call.path || '.');
       const re = pathGlobToRegExp(pattern);
       const 探してよい = respectGitIgnore ? notIgnored(root) : null;
+      const ignoreRules = readIgnoreRules(root);
       const 当たり = [];
       let 打ち切った = false;
       const walk = (dir) => {
@@ -1325,7 +1326,7 @@ function makeTools({
 
           const fromRoot = path.relative(root, full);
           if (探してよい && !探してよい.has(fromRoot)) continue;
-          if (whyBlocked(root, fromRoot, { protectSecrets })) continue;
+          if (whyBlocked(root, fromRoot, { protectSecrets, ignoreRules })) continue;
           let mtime = 0;
           try {
             mtime = fs.statSync(full).mtimeMs;
@@ -1963,6 +1964,7 @@ function makeTools({
       let scanned = 0;
 
       const 探してよい = respectGitIgnore ? notIgnored(root) : null;
+      const ignoreRules = readIgnoreRules(root);
       const walk = (dir) => {
         if (hits.length >= cap) return;
         let items;
@@ -1994,16 +1996,16 @@ function makeTools({
             if (!fileRe.test(it.name) && !fileRe.test(relForPat)) continue;
           }
           scanned += 1;
+          const rel = path.relative(root, full);
+
+          if (探してよい && !探してよい.has(rel)) continue;
+          if (whyBlocked(root, rel, { protectSecrets, ignoreRules })) continue;
           let body;
           try {
             body = fs.readFileSync(full, 'utf8');
           } catch {
             continue;
           }
-          const rel = path.relative(root, full);
-
-          if (探してよい && !探してよい.has(rel)) continue;
-          if (whyBlocked(root, rel, { protectSecrets })) continue;
           body.split('\n').forEach((line, i) => {
             if (!全部歩く && hits.length >= cap) return;
             re.lastIndex = 0;
