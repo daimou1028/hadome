@@ -33,7 +33,7 @@ const DEFAULT_DENYLIST = [
     key: 'tool.deny.gitBranch',
   },
   {
-    re: /^node(\s|$)[\s\S]*(^|\s)(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)(=|\s|$)/,
+    re: /^node\b[\s\S]*(?<=^|\s)(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)(=|\s|$)/,
     why: 'node のこの引数は、構文を見る前に別のものを走らせます',
     key: 'tool.deny.nodePreload',
   },
