@@ -40,17 +40,15 @@ const DEFAULT_DENYLIST = [
   {
     re: /--remote-debugging-(port|pipe)(=|\s|$)/,
     why:
-      '遠隔デバッグの口を開く browser は、こちらからは起こせません。' +
-      '隔離した設定ファイルの browser は「隔離したブラウザーを起こす」' +
-      '（chatgptBridge.startBrowser）で起こしてください',
+      '遠隔デバッグの口を開く browser は、命令からは起こせません。' +
+      '隔離した browser は browser_open が自分で起こすので、そちらを使ってください',
     key: 'tool.deny.remoteDebugging',
   },
   {
     re: /(^|[\s"'/])(Google Chrome|Google Chrome Canary|Chromium|Microsoft Edge|Brave Browser)([\s"']|$)[\s\S]*--user-data-dir(=|\s)/,
     why:
-      'browser を別の設定ファイルで起こす事は、こちらからはできません。' +
-      '隔離した設定ファイルの browser は「隔離したブラウザーを起こす」' +
-      '（chatgptBridge.startBrowser）で起こしてください',
+      'browser を別の設定ファイルで起こす事は、命令からはできません。' +
+      '隔離した browser は browser_open が自分で起こすので、そちらを使ってください',
     key: 'tool.deny.browserProfile',
   },
 ];

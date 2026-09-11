@@ -561,6 +561,8 @@ module.exports = {
   'tool.deny.output': '--output はワークスペースの外へ書けるので、自動では通しません: {cmd}',
   'tool.deny.gitBranch': 'この git branch は枝を消したり付け替えたりするので、自動では通しません: {cmd}',
   'tool.deny.nodePreload': 'この node は構文を見る前に別のものを走らせるので、自動では通しません: {cmd}',
+  'tool.deny.remoteDebugging': '遠隔デバッグの口を開く browser は、命令からは起こせません。browser_open が自分で起こします: {cmd}',
+  'tool.deny.browserProfile': 'browser を別の設定ファイルで起こす事は、命令からはできません。browser_open が自分で起こします: {cmd}',
   'tool.deny.other': '否決の表に当たったので、自動では通しません: {cmd}',
   'tool.emptyCommand': 'コマンドが空です',
   'tool.hookDeny': '利用者の検査が止めました',

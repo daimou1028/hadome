@@ -557,6 +557,8 @@ module.exports = {
   'tool.deny.output': 'Not auto-approved: --output can write outside the workspace: {cmd}',
   'tool.deny.gitBranch': 'Not auto-approved: this git branch deletes or moves a branch: {cmd}',
   'tool.deny.nodePreload': 'Not auto-approved: this node runs other code before the syntax check: {cmd}',
+  'tool.deny.remoteDebugging': 'Not auto-approved: a browser cannot be started from a command with a remote-debugging port open. browser_open starts one itself: {cmd}',
+  'tool.deny.browserProfile': 'Not auto-approved: a browser cannot be started from a command with a different profile. browser_open starts one itself: {cmd}',
   'tool.deny.other': 'Not auto-approved: matched a deny rule: {cmd}',
   'tool.emptyCommand': 'The command is empty',
   'tool.hookDeny': 'Your hook blocked it',

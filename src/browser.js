@@ -318,6 +318,19 @@ async function open(url, { port = PORT, waitMs = 15000 } = {}) {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+
+  while (Date.now() < 期限) {
+    let 中の場所 = '';
+    try {
+
+      中の場所 = await evaluate(targetId, 'location.href', { port });
+    } catch {
+      break;
+    }
+    if (中の場所 && 中の場所 !== 'about:blank') break;
+
+    await new Promise((r) => setTimeout(r, 250));
+  }
   return { targetId, url: (最後 && 最後.url) || url, title: (最後 && 最後.title) || '' };
 }
 

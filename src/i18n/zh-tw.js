@@ -553,6 +553,8 @@ module.exports = {
   'tool.deny.output': '不自動放行：--output 會寫到工作區外面：{cmd}',
   'tool.deny.gitBranch': '不自動放行：這個 git branch 會刪除或改名分支：{cmd}',
   'tool.deny.nodePreload': '不自動放行：這個 node 會在檢查語法之前先執行別的東西：{cmd}',
+  'tool.deny.remoteDebugging': '不自動放行：不能用指令開啟帶遠端偵錯連接埠的瀏覽器，browser_open 會自己開：{cmd}',
+  'tool.deny.browserProfile': '不自動放行：不能用指令以別的設定檔開啟瀏覽器，browser_open 會自己開：{cmd}',
   'tool.deny.other': '不自動放行：命中了否決規則：{cmd}',
   'tool.emptyCommand': '指令是空的',
   'tool.hookDeny': '你的檢查擋下了這個動作',
