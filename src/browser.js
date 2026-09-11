@@ -307,6 +307,18 @@ async function open(url, { port = PORT, waitMs = 15000 } = {}) {
         '命令選択区の「隔離したブラウザーを起こす」で起こし直してください。'
     );
   }
+
+  const 空の頁 = list.find((x) => x.type === 'page' && (!x.url || x.url === 'about:blank'));
+  if (空の頁) {
+    const page = await 確かな頁(空の頁.id, port);
+    try {
+
+      await page.goto(url, { waitUntil: 'commit', timeout: waitMs });
+    } catch (e) {
+      throw new Error(`頁を開けませんでした: ${String((e && e.message) || e).split('\n')[0]}`);
+    }
+    return 開くのを待つ(空の頁.id, url, port, waitMs);
+  }
   const c = await connect(any.webSocketDebuggerUrl);
   let targetId = null;
   try {
@@ -321,6 +333,10 @@ async function open(url, { port = PORT, waitMs = 15000 } = {}) {
     c.close();
   }
   if (!targetId) throw new Error('タブを開けませんでした');
+  return 開くのを待つ(targetId, url, port, waitMs);
+}
+
+async function 開くのを待つ(targetId, url, port, waitMs) {
 
   const 期限 = Date.now() + waitMs;
   let 最後 = null;

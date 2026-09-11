@@ -100,6 +100,14 @@ async function ひとつに絞る(l, page = null, 目印 = null) {
   const n = await l.count();
   if (n === 0) {
 
+    if (page && 目印 && 目印.role && 目印.name) {
+      const 頭で = page.getByRole(String(目印.role), {
+        name: new RegExp(`^${String(目印.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`),
+      });
+      const m = await 頭で.count().catch(() => 0);
+      if (m === 1) return { ok: true, n: 1, l: 頭で, 名が伸びていた: true };
+    }
+
     let 候補 = [];
     if (page && 目印 && 目印.role) {
       try {
@@ -214,6 +222,9 @@ async function 値を入れる(page, 目印, 値) {
   }
 
   if (種.role === 'combobox' || 種.role === 'listbox') {
+
+    const 手形 = await el.elementHandle();
+    const 前の字 = String((await el.innerText().catch(() => '')) || '').trim();
     await el.click({ timeout: 待ちの上限 });
     const 欲しい = String(値).trim();
     const 選び = page.getByRole('option', { name: 欲しい, exact: true });
@@ -232,8 +243,21 @@ async function 値を入れる(page, 目印, 値) {
       };
     }
     await 選び.first().click({ timeout: 待ちの上限 });
-    const いま = await el.innerText().catch(() => '');
-    return { ok: true, value: String(いま).trim().slice(0, 80), tag: 'COMBOBOX' };
+
+    let いま = '';
+    for (let i = 0; i < 12; i += 1) {
+
+      いま = String(
+        (手形 && (await 手形.innerText().catch(() => ''))) ||
+          (手形 && (await 手形.getAttribute('aria-label').catch(() => ''))) ||
+          ''
+      ).trim();
+      if (いま && いま !== 前の字) break;
+
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (手形) await 手形.dispose().catch(() => {});
+    return { ok: true, value: いま.slice(0, 80), tag: 'COMBOBOX' };
   }
   if (種.type === 'checkbox' || 種.type === 'radio') {
 
