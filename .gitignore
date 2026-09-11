@@ -1,0 +1,12 @@
+node_modules/
+
+*.vsix
+hadome-chrome-*.zip
+
+webview/dist/
+
+/*.html
+
+prior-art/
+
+.DS_Store

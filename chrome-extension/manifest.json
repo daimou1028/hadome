@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT ブリッジ（対象タブ側）",
+  "version": "0.59.0",
+  "description": "chatgpt.com の対象タブと、ローカルのブリッジをつなぐ。Chrome Canary にだけ入れること。",
+  "host_permissions": [
+    "https://chatgpt.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "injected.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "tabs",
+    "storage"
+  ]
+}

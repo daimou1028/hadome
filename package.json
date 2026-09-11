@@ -1,0 +1,735 @@
+{
+  "name": "hadome",
+  "displayName": "%extension.displayName%",
+  "description": "%extension.description%",
+  "version": "0.1.10",
+  "publisher": "local",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "vscode": "^1.96.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onUri",
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "chatgptBridge.focus",
+        "title": "%command.focus.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.release",
+        "title": "%command.release.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openInEditor",
+        "title": "%command.openInEditor.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.toggleFocusView",
+        "title": "%command.toggleFocusView.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.blur",
+        "title": "%command.blur.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.exportChat",
+        "title": "%command.exportChat.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openWalkthrough",
+        "title": "%command.openWalkthrough.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.newCustomization",
+        "title": "%command.newCustomization.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openCustomizations",
+        "title": "%command.openCustomizations.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openSettings",
+        "title": "%command.openSettings.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.clearInputHistory",
+        "title": "%command.clearInputHistory.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.acceptInput",
+        "title": "%command.acceptInput.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.terminalAddToContext",
+        "title": "%command.terminalAddToContext.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.terminalFixCommand",
+        "title": "%command.terminalFixCommand.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.terminalExplainCommand",
+        "title": "%command.terminalExplainCommand.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.explainCode",
+        "title": "%command.explainCode.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.fixCode",
+        "title": "%command.fixCode.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.improveCode",
+        "title": "%command.improveCode.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openInNewWindow",
+        "title": "%command.openInNewWindow.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.createWorktree",
+        "title": "%command.createWorktree.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.newConversation",
+        "title": "%command.newConversation.title%",
+        "icon": "$(add)",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.newConversationAs",
+        "title": "%command.newConversationAs.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.history",
+        "title": "%command.history.title%",
+        "icon": "$(history)",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.schedule",
+        "title": "%command.schedule.title%",
+        "icon": "$(clock)",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.showLog",
+        "title": "%command.showLog.title%",
+        "icon": "$(output)",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.forgetAllowed",
+        "title": "%command.forgetAllowed.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openStorage",
+        "title": "%command.openStorage.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.startBrowser",
+        "title": "%command.startBrowser.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.openChromeExtension",
+        "title": "%command.openChromeExtension.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.acceptBlock",
+        "title": "%command.acceptBlock.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.rejectBlock",
+        "title": "%command.rejectBlock.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.insertSelection",
+        "title": "%command.insertSelection.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.probeApis",
+        "title": "%command.probeApis.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.nextCodeBlock",
+        "title": "%command.nextCodeBlock.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.previousCodeBlock",
+        "title": "%command.previousCodeBlock.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.deleteAllSessions",
+        "title": "%command.deleteAllSessions.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.disconnectTab",
+        "title": "%command.disconnectTab.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.reconnectTab",
+        "title": "%command.reconnectTab.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.importChat",
+        "title": "%command.importChat.title%",
+        "category": "%extension.displayName%"
+      },
+      {
+        "command": "chatgptBridge.writeProjectInstructions",
+        "title": "%command.writeProjectInstructions.title%",
+        "category": "%extension.displayName%"
+      }
+    ],
+    "configuration": {
+      "title": "ChatGPT ブリッジ",
+      "properties": {
+        "chatgptBridge.port": {
+          "type": "number",
+          "default": 8765,
+          "description": "%config.port.description%"
+        },
+        "chatgptBridge.maxTurns": {
+          "type": "number",
+          "default": 0,
+          "description": "%config.maxTurns.description%"
+        },
+        "chatgptBridge.allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "git status",
+            "git diff",
+            "git log",
+            "git show",
+            "npm test",
+            "npm run lint",
+            "composer install",
+            "php -l",
+            "node --check"
+          ],
+          "description": "%config.allowlist.description%"
+        },
+        "chatgptBridge.denylist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.denylist.description%"
+        },
+        "chatgptBridge.requireRestorePoint": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.requireRestorePoint.description%"
+        },
+        "chatgptBridge.loadGlobalRules": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.loadGlobalRules.description%"
+        },
+        "chatgptBridge.protectSecrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.protectSecrets.description%"
+        },
+        "chatgptBridge.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ja",
+            "en",
+            "zh-tw"
+          ],
+          "enumDescriptions": [
+            "エディターの表示言語に合わせる（既定）",
+            "日本語",
+            "English",
+            "繁體中文（台灣）"
+          ],
+          "default": "auto",
+          "description": "%config.language.description%"
+        },
+        "chatgptBridge.subAgents": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 4,
+          "description": "%config.subAgents.description%"
+        },
+        "chatgptBridge.restartGapSeconds": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 600,
+          "description": "%config.restartGapSeconds.description%"
+        },
+        "chatgptBridge.subPortBase": {
+          "type": "number",
+          "default": 8810,
+          "description": "%config.subPortBase.description%"
+        },
+        "chatgptBridge.revealOnStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.revealOnStart.description%"
+        },
+        "chatgptBridge.allowedOutside": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.allowedOutside.description%"
+        },
+        "chatgptBridge.disabledTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "list_dir",
+              "read_file",
+              "search",
+              "glob",
+              "codebase_search",
+              "edit_file",
+              "write_file",
+              "notebook_edit",
+              "run_command",
+              "read_command_output",
+              "web_fetch",
+              "web_search",
+              "browser_open",
+              "browser_read",
+              "browser_click",
+              "browser_shot",
+              "browser_type",
+              "browser_scroll",
+              "browser_save",
+              "spawn_agents",
+              "enter_worktree",
+              "exit_worktree",
+              "config"
+            ]
+          },
+          "default": [],
+          "description": "%config.disabledTools.description%"
+        },
+        "chatgptBridge.mcp": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.mcp.description%"
+        },
+        "chatgptBridge.allowedOutsideWrite": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.allowedOutsideWrite.description%"
+        },
+        "chatgptBridge.allowedMcpServers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.allowedMcpServers.description%"
+        },
+        "chatgptBridge.allowedSites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.allowedSites.description%"
+        },
+        "chatgptBridge.notify": {
+          "type": "string",
+          "enum": [
+            "off",
+            "needsYou",
+            "always"
+          ],
+          "enumDescriptions": [
+            "知らせない",
+            "待たせている時だけ知らせる（聞かれている時）",
+            "終わった時も知らせる"
+          ],
+          "default": "needsYou",
+          "markdownDescription": "パネルが見えていない時に、エディターの知らせを出すかどうか。参考実装（Claude Code）も「待たせている時」と「終わった時」の 2 つの時機を持ちます。**パネルが見えている時は出しません**（目の前に在る物を知らせるのは雑音）。"
+        },
+        "chatgptBridge.mode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "edit",
+            "plan",
+            "never"
+          ],
+          "default": "ask",
+          "enumDescriptions": [
+            "作業場の中の書き換えも毎回聞きます。始めたばかりの時や、慎重にやりたい時に。",
+            "作業場の中の書き換えは聞きません。作業場の外と、許可リストに無い命令は聞きます（既定）。",
+            "調べて段取りを立てるだけで、何も書き換えません。段取りに納得してから別のモードへ移ります。",
+            "聞きません。**隔離した作業場でだけ**使ってください。触らせない場所（.git など）は、この場合も通しません。"
+          ],
+          "description": "%config.mode.description%"
+        },
+        "chatgptBridge.modes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "slug"
+            ],
+            "properties": {
+              "slug": {
+                "type": "string",
+                "description": "%config.modes.slug%"
+              },
+              "name": {
+                "type": "string",
+                "description": "%config.modes.name%"
+              },
+              "whenToUse": {
+                "type": "string",
+                "description": "%config.modes.whenToUse%"
+              },
+              "instruction": {
+                "type": "string",
+                "description": "%config.modes.instruction%"
+              },
+              "disabledTools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "%config.modes.disabledTools%"
+              }
+            }
+          },
+          "default": [],
+          "description": "%config.modes.description%"
+        },
+        "chatgptBridge.outputStyle": {
+          "type": "string",
+          "default": "",
+          "description": "%config.outputStyle.description%"
+        },
+        "chatgptBridge.requireModifierToSend": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.requireModifierToSend.description%"
+        },
+        "chatgptBridge.autosave": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.autosave.description%"
+        },
+        "chatgptBridge.respectGitIgnore": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.respectGitIgnore.description%"
+        },
+        "chatgptBridge.diagnosticsAfterEdit": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.diagnosticsAfterEdit.description%"
+        },
+        "chatgptBridge.preventDoneWithOpenTodos": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.preventDoneWithOpenTodos.description%"
+        },
+        "chatgptBridge.focusView": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.focusView.description%"
+        },
+        "chatgptBridge.codeActions": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.codeActions.description%"
+        },
+        "chatgptBridge.contextWindow": {
+          "type": "number",
+          "default": 0,
+          "description": "%config.contextWindow.description%"
+        },
+        "chatgptBridge.commandTimeoutAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.commandTimeoutAllowlist.description%"
+        },
+        "chatgptBridge.projectUrl": {
+          "type": "string",
+          "default": "",
+          "description": "%config.projectUrl.description%"
+        },
+        "chatgptBridge.projectRulesLanguage": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ja",
+            "en",
+            "zh-tw"
+          ],
+          "enumDescriptions": [
+            "画面と同じ言葉（既定）",
+            "日本語",
+            "English",
+            "繁體中文（台灣）"
+          ],
+          "default": "auto",
+          "description": "%config.projectRulesLanguage.description%"
+        },
+        "chatgptBridge.browserPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "%config.browserPath.description%"
+        },
+        "chatgptBridge.browserProfile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "%config.browserProfile.description%"
+        }
+      }
+    },
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "chatgptBridgeSecondary",
+          "title": "%extension.displayName%",
+          "icon": "media/icon.svg",
+          "when": "!chatgptBridge.noSecondarySidebar"
+        }
+      ],
+      "activitybar": [
+        {
+          "id": "chatgptBridgePrimary",
+          "title": "%extension.displayName%",
+          "icon": "media/icon.svg",
+          "when": "chatgptBridge.noSecondarySidebar"
+        }
+      ]
+    },
+    "views": {
+      "chatgptBridgeSecondary": [
+        {
+          "id": "chatgptBridge.chatSecondary",
+          "type": "webview",
+          "name": "%view.chat.name%",
+          "when": "!chatgptBridge.noSecondarySidebar"
+        }
+      ],
+      "chatgptBridgePrimary": [
+        {
+          "id": "chatgptBridge.chat",
+          "type": "webview",
+          "name": "%view.chat.name%",
+          "when": "chatgptBridge.noSecondarySidebar"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "chatgptBridge.acceptBlock",
+          "when": "false"
+        },
+        {
+          "command": "chatgptBridge.rejectBlock",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "chatgptBridge.newConversation",
+          "when": "view == chatgptBridge.chat || view == chatgptBridge.chatSecondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "chatgptBridge.history",
+          "when": "view == chatgptBridge.chat || view == chatgptBridge.chatSecondary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "chatgptBridge.showLog",
+          "when": "view == chatgptBridge.chat || view == chatgptBridge.chatSecondary",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "chatgptBridge.insertSelection",
+          "group": "navigation",
+          "when": "editorTextFocus"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "chatgptBridge.terminalAddToContext",
+          "group": "chatgptBridge@1"
+        },
+        {
+          "command": "chatgptBridge.terminalFixCommand",
+          "group": "chatgptBridge@2"
+        },
+        {
+          "command": "chatgptBridge.terminalExplainCommand",
+          "group": "chatgptBridge@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "chatgptBridge.insertSelection",
+        "key": "alt+k",
+        "mac": "alt+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "chatgptBridge.toggleFocusView",
+        "key": "ctrl+alt+f",
+        "mac": "ctrl+alt+f"
+      },
+      {
+        "command": "chatgptBridge.nextCodeBlock",
+        "key": "ctrl+alt+pagedown",
+        "mac": "ctrl+alt+pagedown",
+        "when": "view.chatgptBridge.chat.visible || view.chatgptBridge.chatSecondary.visible"
+      },
+      {
+        "command": "chatgptBridge.previousCodeBlock",
+        "key": "ctrl+alt+pageup",
+        "mac": "ctrl+alt+pageup",
+        "when": "view.chatgptBridge.chat.visible || view.chatgptBridge.chatSecondary.visible"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "chatgptBridgeStart",
+        "title": "%walkthrough.title%",
+        "description": "%walkthrough.description%",
+        "featuredFor": [
+          "**/*"
+        ],
+        "steps": [
+          {
+            "id": "what",
+            "title": "%walkthrough.what.title%",
+            "description": "%walkthrough.what.description%",
+            "media": {
+              "markdown": "media/walkthrough/1-what.md"
+            }
+          },
+          {
+            "id": "extension",
+            "title": "%walkthrough.extension.title%",
+            "description": "%walkthrough.extension.description%",
+            "media": {
+              "markdown": "media/walkthrough/2-extension.md"
+            },
+            "completionEvents": [
+              "onCommand:chatgptBridge.openChromeExtension"
+            ]
+          },
+          {
+            "id": "talk",
+            "title": "%walkthrough.talk.title%",
+            "description": "%walkthrough.talk.description%",
+            "media": {
+              "markdown": "media/walkthrough/3-talk.md"
+            },
+            "completionEvents": [
+              "onCommand:chatgptBridge.focus"
+            ]
+          },
+          {
+            "id": "rules",
+            "title": "%walkthrough.rules.title%",
+            "description": "%walkthrough.rules.description%",
+            "media": {
+              "markdown": "media/walkthrough/4-rules.md"
+            },
+            "completionEvents": [
+              "onCommand:chatgptBridge.newCustomization"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node tools/build-webview.js",
+    "watch": "node tools/build-webview.js --watch",
+    "prepare": "node tools/build-webview.js && node tools/install-git-hooks.js",
+    "package": "npm run build && vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links",
+    "package:chrome": "node tools/package-chrome.js",
+    "hooks:install": "node tools/install-git-hooks.js",
+    "browser": "node tools/bridge-browser.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@vscode/codicons": "^0.0.46-24",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "^0.28.1",
+    "mermaid": "11.16.1",
+    "shiki": "4.4.3"
+  }
+}
