@@ -258,6 +258,9 @@ function settings() {
 
     subPortBase: c.get('subPortBase', 8810),
 
+    browserPath: c.get('browserPath', ''),
+    browserProfile: c.get('browserProfile', ''),
+
     disabledTools: c.get('disabledTools', []),
     respectGitIgnore: c.get('respectGitIgnore', true),
 
@@ -717,6 +720,9 @@ async function handleRun(task) {
         denylist,
         protectSecrets,
         disabled: settings().disabledTools,
+
+        browserProfile: settings().browserProfile || '',
+        browserPath: settings().browserPath || '',
       });
 
       const readOrProblems = async (call) => {

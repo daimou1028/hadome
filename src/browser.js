@@ -21,9 +21,12 @@ function isOwnSite(u) {
   return OWN.has(o);
 }
 
-const 隔離した設定ファイル =
-  process.env.BRIDGE_BROWSER_PROFILE ||
-  path.join(process.env.HOME || '', 'Library/Application Support/chatgpt-bridge-canary');
+function 隔離した設定ファイルの道() {
+  return (
+    process.env.BRIDGE_BROWSER_PROFILE ||
+    path.join(process.env.HOME || '', 'Library/Application Support/chatgpt-bridge-canary')
+  );
+}
 
 const 確かめた口 = new Map();
 
@@ -61,15 +64,14 @@ function 隔離した口か(port = PORT) {
   let 良い = false;
   let なぜ =
     命令列 === 空
-      ? '隔離したブラウザーが起きていません。\n' +
-        '命令選択区の「隔離したブラウザーを起こす」で起こしてから、もう一度 頼んでください。\n' +
-        '**自分で起こす事はできません**（起こした物には触らない決まりです）。'
+      ? '隔離したブラウザーを起こせませんでした。\n' +
+        '命令選択区の「隔離したブラウザーを起こす」で起こしてから、もう一度 頼んでください。'
       : `口 ${port} を誰が握っているか読めませんでした（lsof が使えない機械かもしれません）。\n` +
         '読めない口には触りません。';
   if (命令列 !== 空 && 命令列 !== 読めない) {
 
-    const 印 = `--user-data-dir=${隔離した設定ファイル}`;
-    if (命令列.includes(印) || 命令列.includes(`--user-data-dir="${隔離した設定ファイル}"`)) {
+    const 印 = `--user-data-dir=${隔離した設定ファイルの道()}`;
+    if (命令列.includes(印) || 命令列.includes(`--user-data-dir="${隔離した設定ファイルの道()}"`)) {
       良い = true;
       なぜ = '';
     } else if (!/--user-data-dir/.test(命令列)) {
@@ -84,13 +86,13 @@ function 隔離した口か(port = PORT) {
       なぜ =
         `口 ${port} の browser は、隔離した設定ファイルの物ではありません。\n` +
         `  いま握っている設定ファイル: ${いまの道}\n` +
-        `  こちらが触れるのは        : ${隔離した設定ファイル}\n` +
+        `  こちらが触れるのは        : ${隔離した設定ファイルの道()}\n` +
         '**利用者のふだんの browser かもしれないので触りません。**\n' +
         'その browser を閉じてから、「隔離したブラウザーを起こす」で起こしてください。';
     }
   }
-  確かめた口.set(port, { 良い, なぜ });
-  return { 良い, なぜ };
+  確かめた口.set(port, { 良い, なぜ, 様子: 命令列 });
+  return { 良い, なぜ, 様子: 命令列 };
 }
 
 async function 窓を出させる(port = PORT) {
@@ -103,7 +105,7 @@ async function 窓を出させる(port = PORT) {
   if (!実行檔) return;
   try {
     require('child_process')
-      .spawn(実行檔, [`--user-data-dir=${隔離した設定ファイル}`, 'about:blank'], {
+      .spawn(実行檔, [`--user-data-dir=${隔離した設定ファイルの道()}`, 'about:blank'], {
         detached: true,
         stdio: 'ignore',
       })
@@ -121,6 +123,74 @@ async function 窓を出させる(port = PORT) {
 
     }
   }
+}
+
+async function 起こす(port = PORT) {
+  let 実行檔 = '';
+  try {
+    実行檔 = (require('../tools/lib/find-browser').探す() || {}).実行檔 || '';
+  } catch {
+    実行檔 = '';
+  }
+  if (!実行檔) {
+    throw new Error(
+      '相方の入っている browser が見つかりませんでした。\n' +
+        '設定 `chatgptBridge.browserPath` に実行檔の道を入れてください。'
+    );
+  }
+  try {
+    require('child_process')
+      .spawn(
+        実行檔,
+        [
+          `--user-data-dir=${隔離した設定ファイルの道()}`,
+          `--remote-debugging-port=${port}`,
+
+          '--disable-features=LocalNetworkAccessChecks',
+          '--no-first-run',
+          '--no-default-browser-check',
+          'about:blank',
+        ],
+        { detached: true, stdio: 'ignore' }
+      )
+      .unref();
+  } catch (e) {
+    throw new Error(`隔離したブラウザーを起こせませんでした: ${e.message}`);
+  }
+
+  for (let i = 0; i < 40; i += 1) {
+    await new Promise((r) => setTimeout(r, 500));
+
+    if (await 口が返るか(port)) return;
+  }
+  throw new Error(
+    `隔離したブラウザーを起こしましたが、口 ${port} が 20 秒 経っても返りません。\n` +
+      '命令選択区の「隔離したブラウザーを起こす」で起こし直してください。'
+  );
+}
+
+function 口が返るか(port) {
+  return new Promise((res) => {
+    const req = http.get(
+      { host: '127.0.0.1', port, path: '/json/version', timeout: 2000 },
+      (r) => {
+        r.resume();
+        res(r.statusCode === 200);
+      }
+    );
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => res(false));
+  });
+}
+
+async function 用意する(port = PORT) {
+  const r = 隔離した口か(port);
+  if (r.良い) return;
+  if (r.様子 !== 空) throw new Error(r.なぜ);
+  await 起こす(port);
+  確かめた口.delete(port);
+  const r2 = 隔離した口か(port);
+  if (!r2.良い) throw new Error(r2.なぜ);
 }
 
 function 隔離を確かめる(port = PORT) {
@@ -205,6 +275,8 @@ async function 確かなタブ(targetId, port = PORT, { tries = 6, waitMs = 300 
 
 async function open(url, { port = PORT, waitMs = 15000 } = {}) {
   if (isOwnSite(url)) throw new Error(`この站は開けません: ${originOf(url) || url}`);
+
+  await 用意する(port);
   let list = await getJSON('/json/list', port);
   let any = list.find((x) => x.type === 'page');
 

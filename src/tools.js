@@ -709,6 +709,8 @@ function makeTools({
   allowedSites: allowedSitesIn = [],
 
   browserProfile = '',
+
+  browserPath = '',
   openTabs: openTabsIn = null,
 
   onOpenTabs = null,
@@ -754,6 +756,8 @@ function makeTools({
   const allowedSite = new Set(allowedSitesIn.map((x) => String(x)));
 
   if (browserProfile) process.env.BRIDGE_BROWSER_PROFILE = browserProfile;
+
+  if (browserPath) process.env.BRIDGE_BROWSER_PATH = browserPath;
   const 開いたタブ = new Map(openTabsIn || []);
 
   let いま見ているタブ = null;
