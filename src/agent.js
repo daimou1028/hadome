@@ -334,6 +334,8 @@ async function runAgentBody({
   onOpenTabs = null,
 
   onAllowAlways = null,
+
+  isRevoked = null,
 }, onTools) {
 
   const 背景の走り = [];
@@ -387,6 +389,7 @@ async function runAgentBody({
     readOnly,
     askPermission,
     onAllowAlways,
+    isRevoked,
     allowedOutside,
     allowedOutsideWrite,
     allowedMcpServers,

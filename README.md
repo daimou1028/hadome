@@ -57,11 +57,27 @@ in code: before touching a debugging port it reads which process holds it and re
 unless that process is on the isolated profile. Pages open as background tabs, and stay
 open until the work is done.
 
+<p align="center">
+  <img src="media/browser-en.png" width="420"
+       alt="The panel showing what browser_read returned: an accessibility tree with a text box, a dropdown and its options, a checked checkbox and a button — then browser_set putting a value into the dropdown.">
+  <br>
+  <sub>*It reads the accessibility tree, not a screenshot — so a dropdown is a dropdown, and what is selected is visible.*</sub>
+</p>
+
+
 **Permission is layered, not a single switch.** Four modes (`ask` / `edit` / `plan` /
 `never`), your own named modes with their own tool sets, an allowlist and a denylist for
 commands, separate read and write permission for folders outside the workspace,
 per-server MCP approval, per-origin browser approval — and everything you grant with
 "always allow" can be taken back one item at a time. See [Safety](#safety).
+
+<p align="center">
+  <img src="media/brakes-en.png" width="420"
+       alt="The panel showing three refused tool calls — a credential file, a protected path, a file outside the workspace — and a command waiting for permission.">
+  <br>
+  <sub>*Three refusals and one question, in a single turn.*</sub>
+</p>
+
 
 **It can run your own checks.** Put a `.chatgpt-bridge/hooks.json` in the workspace and
 your commands run before and after each tool call.
@@ -72,11 +88,9 @@ your commands run before and after each tool call.
 
 ## Requirements
 
-| | |
-|---|---|
-| Editor | VSCodium or VS Code 1.96+ |
-| Node | 20 or newer |
-| Browser | A Chromium-based browser with a ChatGPT session you are signed in to |
+- **Editor** — VSCodium or VS Code 1.96+
+- **Node** — 20 or newer
+- **Browser** — A Chromium-based browser with a ChatGPT session you are signed in to
 
 ## Install
 

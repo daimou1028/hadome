@@ -103,6 +103,7 @@ function launch() {
       '--disable-features=LocalNetworkAccessChecks',
       '--no-first-run',
       '--no-default-browser-check',
+
       ENTRY,
     ],
     { detached: true, stdio: 'ignore' }

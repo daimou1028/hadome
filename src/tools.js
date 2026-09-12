@@ -25,16 +25,23 @@ const DEFAULT_DENYLIST = [
     re: /(^|\s)--output(=|\s|$)/,
     why: '--output は作業場の外へ書けます',
     key: 'tool.deny.output',
+
+    一度だけ許せる: true,
   },
   {
     re: /^git\b[\s\S]*\bbranch\b[\s\S]*\s(-d|-D|-m|-M|--delete|--force|--move)(=|\s|$)/,
     why: 'git branch のこの引数は枝を消したり付け替えたりします',
     key: 'tool.deny.gitBranch',
+
+    一度だけ許せる: true,
   },
   {
-    re: /^node(\s|$)[\s\S]*(^|\s)(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)(=|\s|$)/,
+
+    re: /^node(?=\s|$)[\s\S]*(^|\s)(-r|--require|--import|--loader|--experimental-loader|-e|--eval|-p|--print)(=|\s|$)/,
     why: 'node のこの引数は、構文を見る前に別のものを走らせます',
     key: 'tool.deny.nodePreload',
+
+    一度だけ許せる: true,
   },
 
   {
@@ -43,6 +50,7 @@ const DEFAULT_DENYLIST = [
       '遠隔デバッグの口を開く browser は、命令からは起こせません。' +
       '隔離した browser は browser_open が自分で起こすので、そちらを使ってください',
     key: 'tool.deny.remoteDebugging',
+
   },
   {
     re: /(^|[\s"'/])(Google Chrome|Google Chrome Canary|Chromium|Microsoft Edge|Brave Browser)([\s"']|$)[\s\S]*--user-data-dir(=|\s)/,
@@ -50,6 +58,7 @@ const DEFAULT_DENYLIST = [
       'browser を別の設定ファイルで起こす事は、命令からはできません。' +
       '隔離した browser は browser_open が自分で起こすので、そちらを使ってください',
     key: 'tool.deny.browserProfile',
+
   },
 ];
 
@@ -77,7 +86,12 @@ function denyReason(command, denylist = DEFAULT_DENYLIST) {
     const re = rule.re instanceof RegExp ? rule.re : new RegExp(rule.re);
 
     if (re.test(c)) {
-      return { why: rule.why || '否決の表に当たりました', key: rule.key || 'tool.deny.other' };
+      return {
+        why: rule.why || '否決の表に当たりました',
+        key: rule.key || 'tool.deny.other',
+
+        一度だけ許せる: rule.一度だけ許せる === true,
+      };
     }
   }
   return null;
@@ -700,6 +714,8 @@ function makeTools({
 
   onAllowAlways = null,
 
+  isRevoked = null,
+
   mcp = null,
 
   allowedMcpServers: allowedMcpServersIn = [],
@@ -782,7 +798,23 @@ function makeTools({
   const 開いたタブ = new Map(openTabsIn || []);
 
   let いま見ているタブ = null;
-  const under = (set, abs) => [...set].some((d2) => abs === d2 || abs.startsWith(d2 + path.sep));
+
+  const 取り消された = (kind, detail) => {
+    if (!isRevoked) return false;
+    try {
+      return !!isRevoked({ kind, detail: String(detail) });
+    } catch {
+      return false;
+    }
+  };
+
+  const under = (set, abs, kind) =>
+    [...set].some(
+      (d2) => (abs === d2 || abs.startsWith(d2 + path.sep)) && !取り消された(kind, d2)
+    );
+
+  const 生きている許可 = () =>
+    isRevoked ? allowlist.filter((a) => !取り消された('command', a)) : allowlist;
 
   const askOrPass = async (q) => {
     if (mode === 'never') return 'once';
@@ -807,8 +839,8 @@ function makeTools({
       if (!/ワークスペースの外です/.test(String(e.message))) throw e;
       const abs = path.resolve(root, expandHome(String(rel)));
 
-      if (under(allowedWrite, abs)) return abs;
-      if (!write && under(allowedRead, abs)) return abs;
+      if (under(allowedWrite, abs, 'pathWrite')) return abs;
+      if (!write && under(allowedRead, abs, 'path')) return abs;
       const answer = await askOrPass({ kind: write ? 'pathWrite' : 'path', detail: abs });
       if (answer === 'always') {
 
@@ -820,7 +852,14 @@ function makeTools({
         }
 
         (write ? allowedWrite : allowedRead).add(dir);
-        if (onAllowAlways) onAllowAlways({ kind: write ? 'pathWrite' : 'path', detail: dir });
+
+        if (onAllowAlways) {
+          try {
+            await onAllowAlways({ kind: write ? 'pathWrite' : 'path', detail: dir });
+          } catch {
+
+          }
+        }
       } else if (answer !== 'once') {
 
         throw new ToolError(
@@ -1846,6 +1885,8 @@ function makeTools({
       const file = await pathFor(call.path, { write: true });
       const exists = fs.existsSync(file);
 
+      guardOverwrite(call.path, file);
+
       if (!exists) {
         if (call.old_text) {
           throw new ToolError('ファイルがありません。作る場合は old_text を付けないでください', 'tool.noFileForEdit');
@@ -2132,7 +2173,9 @@ function makeTools({
 
       const guardedPath = guardedPathInCommand(cmd);
 
-      if (denied || meta || guardedPath || !isAllowed(cmd, allowlist)) {
+      const 許可 = 生きている許可();
+
+      if (denied || meta || guardedPath || !isAllowed(cmd, 許可)) {
 
         const prog = expandHome(splitArgs(cmd)[0] || cmd);
 
@@ -2148,12 +2191,26 @@ function makeTools({
         });
         if (answer === 'always' && rememberable) {
           allowlist = allowlist.concat([prog]);
-          if (onAllowAlways) onAllowAlways({ kind: 'command', detail: prog });
-        } else if (denied) {
+
+          if (onAllowAlways) {
+            try {
+              await onAllowAlways({ kind: 'command', detail: prog });
+            } catch {
+
+            }
+          }
+
+        } else if (denied && !(denied.一度だけ許せる && answer === 'once')) {
+
+          const 断りの理由 = !askPermission
+            ? ''
+            : answer === 'no'
+              ? '利用者が許しませんでした。\n'
+              : '利用者は許しましたが、この引数は否決の表に在るので走らせません。\n';
           throw new ToolError(
             `この引数は自動では通しません: ${cmd}\n` +
               `${denied.why}\n` +
-              (askPermission ? '利用者が許しませんでした。\n' : '') +
+              断りの理由 +
               '引数を外して書き直してください。',
             denied.key,
             { cmd }
@@ -2172,9 +2229,9 @@ function makeTools({
             `許可リストにありません: ${cmd}\n` +
               (askPermission ? '利用者が許しませんでした。\n' : '') +
               '走らせてよいのは次だけです:\n' +
-              allowlist.map((a) => `  - ${a}`).join('\n'),
+              許可.map((a) => `  - ${a}`).join('\n'),
             askPermission ? 'tool.notAllowedNo' : 'tool.notAllowed',
-            { cmd, list: allowlist.map((a) => `  - ${a}`).join('\n') }
+            { cmd, list: 許可.map((a) => `  - ${a}`).join('\n') }
           );
         }
       }
@@ -2361,7 +2418,7 @@ function makeTools({
       if (seenUrls) seenUrls.add(url);
     }
 
-    if (allowedSite.has(站)) return;
+    if (allowedSite.has(站) && !取り消された('browser', 站)) return;
     const answer = await askOrPass({
       kind: 'browser',
       detail: 何を ? `${何を}\n${url}` : url,
@@ -2416,7 +2473,7 @@ function makeTools({
   };
 
   const mcpGate = async (server, 何を, 中身) => {
-    if (allowedMcp.has(server)) return;
+    if (allowedMcp.has(server) && !取り消された('mcp', server)) return;
     const answer = await askOrPass({
       kind: 'mcp',
 

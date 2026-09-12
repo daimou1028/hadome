@@ -662,6 +662,8 @@ async function handleRun(task) {
     if (!(await confirmConversation(s, task))) return;
 
     s.cancel = false;
+
+    revokedAllows.clear();
     let label = '';
     let shown = 0;
 
@@ -723,6 +725,7 @@ async function handleRun(task) {
 
         browserProfile: settings().browserProfile || '',
         browserPath: settings().browserPath || '',
+        isRevoked: isRevokedAllow,
       });
 
       const readOrProblems = async (call) => {
@@ -948,6 +951,8 @@ async function handleRun(task) {
         s.openTabs = list && list.length ? list : null;
       },
       onAllowAlways: allowAlways,
+
+      isRevoked: isRevokedAllow,
 
       spawnAgents: makeSpawner(s, { maxTurns, protectSecrets }),
 
@@ -2910,6 +2915,12 @@ function askPermissionFromPanel({ kind, detail, always }) {
   });
 }
 
+const revokedAllows = new Set();
+const revokeKey = (kind, detail) => `${kind}\n${String(detail)}`;
+function isRevokedAllow({ kind, detail }) {
+  return revokedAllows.has(revokeKey(kind, detail));
+}
+
 function dirLabel(abs) {
   try {
     return require('fs').statSync(abs).isDirectory() ? abs : path.dirname(abs);
@@ -3412,12 +3423,13 @@ async function toggleFocusView() {
 
 async function forgetAllowed() {
   const c = vscode.workspace.getConfiguration();
+
   const groups = [
-    { key: 'chatgptBridge.allowlist', kindLabel: t('forget.kindCommand') },
-    { key: 'chatgptBridge.allowedOutside', kindLabel: t('forget.kindRead') },
-    { key: 'chatgptBridge.allowedOutsideWrite', kindLabel: t('forget.kindWrite') },
-    { key: 'chatgptBridge.allowedMcpServers', kindLabel: t('forget.kindMcp') },
-    { key: 'chatgptBridge.allowedSites', kindLabel: t('forget.kindSite') },
+    { key: 'chatgptBridge.allowlist', kind: 'command', kindLabel: t('forget.kindCommand') },
+    { key: 'chatgptBridge.allowedOutside', kind: 'path', kindLabel: t('forget.kindRead') },
+    { key: 'chatgptBridge.allowedOutsideWrite', kind: 'pathWrite', kindLabel: t('forget.kindWrite') },
+    { key: 'chatgptBridge.allowedMcpServers', kind: 'mcp', kindLabel: t('forget.kindMcp') },
+    { key: 'chatgptBridge.allowedSites', kind: 'browser', kindLabel: t('forget.kindSite') },
   ];
   const items = [];
   for (const b of groups) {
@@ -3440,6 +3452,8 @@ async function forgetAllowed() {
     const rest = c.get(b.key, []).filter((v) => !drop.includes(String(v)));
 
     await c.update(b.key, rest, vscode.ConfigurationTarget.Workspace);
+
+    for (const v of drop) revokedAllows.add(revokeKey(b.kind, v));
   }
   post({ type: 'note', text: t('note.forgotAllowed', { n: String(picked.length) }) });
 }
