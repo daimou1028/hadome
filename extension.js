@@ -208,8 +208,14 @@ function log(s) {
   if (channel) channel.appendLine(s);
 }
 
+function sendTo(webviewView, type, data, id) {
+  if (webviewView) {
+    webviewView.webview.postMessage({ type, data: data || {}, id: id || null });
+  }
+}
+
 function send(type, data, id) {
-  if (view) view.webview.postMessage({ type, data: data || {}, id: id || null });
+  sendTo(view, type, data, id);
 }
 
 function post(msg) {
@@ -2730,7 +2736,7 @@ function wirePanel(webviewView) {
       const reply = (data) => {
         if (replied || !m || !m.id) return;
         replied = true;
-        send(m.type, data, m.id);
+        sendTo(webviewView, m.type, data, m.id);
       };
 
       const type = m && m.type;

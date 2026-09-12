@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sidebar View 修正報告</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { max-width: 860px; margin: 0 auto; padding: 32px 20px; line-height: 1.7; }
+    h1, h2 { line-height: 1.3; }
+    code { padding: 0.15em 0.35em; border-radius: 4px; background: color-mix(in srgb, currentColor 10%, transparent); }
+    .ok { color: #16803c; font-weight: 700; }
+    .note { padding: 12px 16px; border-left: 4px solid #888; background: color-mix(in srgb, currentColor 6%, transparent); }
+    li { margin: 0.35em 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Sidebar View 修正報告</h1>
+    <p>日期：2026-09-12</p>
+
+    <h2>已修改檔案</h2>
+    <ul>
+      <li><code>extension.js</code></li>
+    </ul>
+
+    <h2>修改內容</h2>
+    <ol>
+      <li>新增 <code>sendTo(webviewView, type, data, id)</code>，讓訊息可以明確送往指定的 Webview。</li>
+      <li>保留原本的 <code>send()</code> 作為相容包裝，仍可使用目前的全域 View。</li>
+      <li>調整 <code>wirePanel()</code> 內的請求回覆流程，改為使用目前請求所屬的 <code>webviewView</code> 傳送回覆。</li>
+      <li>避免兩個 Sidebar View 共用全域狀態時，回覆被送到最後綁定的 View。</li>
+    </ol>
+
+    <h2>重新產生的建置檔案</h2>
+    <ul>
+      <li><code>webview/dist/panel.js</code></li>
+      <li><code>webview/dist/panel.js.map</code></li>
+    </ul>
+
+    <h2>驗證結果</h2>
+    <ul>
+      <li class="ok">npm test：17 項測試全數通過，0 失敗。</li>
+      <li class="ok">npm run build：建置成功。</li>
+    </ul>
+
+    <h2>範圍限制</h2>
+    <p class="note">
+      本次修正處理的是「請求回覆可能被送到另一個 View」的問題。
+      背景 <code>post()</code> 流程仍使用單一 active View；若要完全隔離每個 View 的背景狀態，仍需另行拆分 per-View session/state。
+    </p>
+  </main>
+</body>
+</html>
