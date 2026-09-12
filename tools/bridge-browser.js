@@ -32,6 +32,8 @@ function extensionInstalled() {
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT || 8799);
 const ENTRY = `https://chatgpt.com/?bridge_port=${BRIDGE_PORT}`;
 
+const 起こす時の行き先 = () => (extensionInstalled() ? ENTRY : 'about:blank');
+
 function getJSON(p) {
   return new Promise((res, rej) => {
     const req = http.get({ host: '127.0.0.1', port: CDP_PORT, path: p, timeout: 3000 }, (r) => {
@@ -104,7 +106,7 @@ function launch() {
       '--no-first-run',
       '--no-default-browser-check',
 
-      ENTRY,
+      起こす時の行き先(),
     ],
     { detached: true, stdio: 'ignore' }
   );
@@ -149,6 +151,12 @@ async function chatTab() {
 async function ensureChatTab() {
   const found = await chatTab();
   if (found) return found;
+
+  if (!extensionInstalled()) {
+    const e = new Error('この設定ファイルに相方が入っていないので、ここでは ChatGPT を開きません');
+    e.相方が別の所 = true;
+    throw e;
+  }
   await browserCall('Target.createTarget', { url: ENTRY });
   for (let i = 0; i < 20; i++) {
     await sleep(500);
@@ -159,7 +167,13 @@ async function ensureChatTab() {
 }
 
 async function status() {
-  const tab = await ensureChatTab();
+  let tab;
+  try {
+    tab = await ensureChatTab();
+  } catch (e) {
+    if (e && e.相方が別の所) return { ok: true, 相方が別の所: true };
+    throw e;
+  }
   const id = conversationIdOf(tab.url);
   return {
     ok: true,
@@ -291,10 +305,19 @@ async function toEntry() {
     console.error(s.why);
     process.exit(1);
   }
-  console.log(`場所  : ${s.url}`);
-  console.log(`題名  : ${s.title || '（まだ読み込み中）'}`);
-  console.log(`いま  : ${s.where}`);
-  console.log(`繋ぎ先: ws://127.0.0.1:${BRIDGE_PORT}（VSCodium の chatgptBridge.port も同じ値に）`);
+  if (s.相方が別の所) {
+
+    const 居る = require('./lib/find-browser').探す();
+    console.log('場所  : （この browser には ChatGPT のタブを置きません）');
+    console.log(`いま  : ${居る && 居る.相方 ? `相方は ${居る.名} に入っています` : '相方が見つかりません'}`);
+    console.log(`開く先: ${居る && 居る.相方 ? `${居る.名} で ` : ''}https://chatgpt.com/?bridge_port=${BRIDGE_PORT}`);
+    console.log(`繋ぎ先: ws://127.0.0.1:${BRIDGE_PORT}（VSCodium の chatgptBridge.port も同じ値に）`);
+  } else {
+    console.log(`場所  : ${s.url}`);
+    console.log(`題名  : ${s.title || '（まだ読み込み中）'}`);
+    console.log(`いま  : ${s.where}`);
+    console.log(`繋ぎ先: ws://127.0.0.1:${BRIDGE_PORT}（VSCodium の chatgptBridge.port も同じ値に）`);
+  }
 
   const 相方が居る場所 = require('./lib/find-browser').探す();
   const 別の所に在る = !!(相方が居る場所 && 相方が居る場所.相方 && !extensionInstalled());
@@ -326,7 +349,9 @@ async function toEntry() {
   } catch {
 
   }
-  if (!extensionInstalled()) {
+
+  const どこにも居ない = !(require('./lib/find-browser').探す() || {}).相方;
+  if (!extensionInstalled() && どこにも居ない) {
     console.log('');
     console.log('出ている窓で、次を 1 度だけやってください（設定ファイルは残ります）:');
     console.log('  1. chrome://extensions を開く');
@@ -336,8 +361,10 @@ async function toEntry() {
     console.log('');
     console.log('命令列から入れる道は塞がれています（--load-extension は効きません）。');
   }
-  console.log('');
-  console.log('※ ログインもまだなら、出ている窓で済ませてください（これも 1 度だけ）。');
+  if (extensionInstalled() || どこにも居ない) {
+    console.log('');
+    console.log('※ ログインもまだなら、出ている窓で済ませてください（これも 1 度だけ）。');
+  }
   process.exit(0);
 })().catch((e) => {
   console.error('失敗:', e.message);

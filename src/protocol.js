@@ -564,7 +564,9 @@ function buildInstruction({
       : '              そのまま role と name に書き写せます（選び字を当てなくてよい）',
     readOnly || 切った('browser_click')
       ? null
-      : '  browser_click {"role":"button","name":"次へ"}       押す（text / selector でも指せます）',
+      : '  browser_click {"role":"button","name":"次へ"}       押す（text / selector でも指せます）\n' +
+        '    同じ名前が並ぶ時は、入れ物で絞れます（写しの入れ子のとおりに書けます）:\n' +
+        '    {"role":"row","name":"田中","中":{"role":"button","name":"編輯"}}',
     readOnly || 切った('browser_set')
       ? null
       : '  browser_set {"role":"combobox","name":"月","value":"3 月"}  値を入れる',

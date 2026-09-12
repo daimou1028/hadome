@@ -54,16 +54,33 @@ function readLock(port) {
   return info;
 }
 
-function writeLock(port, workspace) {
+function writeLock(port, workspace, hasTab = false) {
   try {
     fs.mkdirSync(LOCK_DIR, { recursive: true });
     fs.writeFileSync(
       lockPath(port),
-      JSON.stringify({ port, pid: process.pid, workspace: String(workspace || ''), at: Date.now() })
+      JSON.stringify({
+        port,
+        pid: process.pid,
+        workspace: String(workspace || ''),
+        hasTab: !!hasTab,
+        at: Date.now(),
+      })
     );
     return true;
   } catch {
 
+    return false;
+  }
+}
+
+function markTab(port, hasTab) {
+  const info = readLock(port);
+  if (!info || info.pid !== process.pid) return false;
+  try {
+    fs.writeFileSync(lockPath(port), JSON.stringify({ ...info, hasTab: !!hasTab, at: Date.now() }));
+    return true;
+  } catch {
     return false;
   }
 }
@@ -159,6 +176,7 @@ function clearClaim(which = {}) {
 }
 
 module.exports = {
+  markTab,
   LOCK_DIR,
   PORT_FROM,
   PORT_TO,

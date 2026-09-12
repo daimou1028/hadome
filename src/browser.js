@@ -502,4 +502,6 @@ async function close(targetId, { port = PORT } = {}) {
   }
 }
 
-module.exports = { PORT, originOf, isOwnSite, open, read, click, set, shot, type, scroll, fetchBytes, close, evaluate, targetOf, KEYS, 窓を出させる, 用意する };
+const 手を離す = () => require('./pwpage').手を離す();
+
+module.exports = { PORT, originOf, isOwnSite, open, read, click, set, shot, type, scroll, fetchBytes, close, evaluate, targetOf, KEYS, 窓を出させる, 用意する, 手を離す };

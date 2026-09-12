@@ -85,7 +85,14 @@ async function 頁(targetId, port) {
   return p && !p.isClosed() ? p : null;
 }
 
-function 掴む(page, { role = '', name = '', selector = '', text = '', ぼかす = false } = {}) {
+function 掴む(page, 目印 = {}) {
+  const { role = '', name = '', selector = '', text = '', ぼかす = false, 中 = null } = 目印;
+
+  if (中 && typeof 中 === 'object') {
+    const 外 = 掴む(page, { role, name, selector, text, ぼかす });
+    if (!外) return null;
+    return 掴む(外, 中);
+  }
   if (role) {
 
     if (!name) return page.getByRole(String(role));

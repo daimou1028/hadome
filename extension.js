@@ -524,6 +524,8 @@ function makeSpawner(s, opts) {
 
         allowedOutside: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutside', []),
 
+        isRevoked: isRevokedAllow,
+
         readOnly: true,
 
         global: loadGlobal(s.root),
@@ -588,6 +590,8 @@ async function handleRun(task) {
     showQueue();
     return;
   }
+
+  revokedAllows.clear();
   const { port, allowlist, denylist, maxTurns, requireRestorePoint, protectSecrets } = settings();
 
   let mcpGot = null;
@@ -662,8 +666,6 @@ async function handleRun(task) {
     if (!(await confirmConversation(s, task))) return;
 
     s.cancel = false;
-
-    revokedAllows.clear();
     let label = '';
     let shown = 0;
 
@@ -3459,6 +3461,11 @@ async function forgetAllowed() {
 }
 
 async function allowAlways({ kind, detail }) {
+
+  revokedAllows.delete(revokeKey(kind, detail));
+  if (kind === 'path' || kind === 'pathWrite') {
+    revokedAllows.delete(revokeKey(kind, dirLabel(detail)));
+  }
   if (kind === 'path' || kind === 'pathWrite') {
     const c = vscode.workspace.getConfiguration();
 

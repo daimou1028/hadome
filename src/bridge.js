@@ -55,6 +55,10 @@ const JA_FALLBACK = {
     `ChatGPT のタブは、別の窓の枠 ${port} につながっています。`,
   'br.tabElsewhereHow': () =>
     'その窓へ譲るよう頼みましたが、返事がありませんでした。その窓で /exit するか、窓を閉じてください。',
+
+  'br.nobodyHolds': ({ port }) =>
+    'どの窓もこのタブを握っていません（前の走りが指した枠を覚えたままです）。\n' +
+    `chatgpt.com を新しいタブで開くか、https://chatgpt.com/?bridge_port=${port} を開いてください（読み込み直しでは直りません）。`,
   'br.oldTab': ({ tab, here }) =>
     `ブラウザの拡張機能が古いままです（タブ側 ${tab} / こちら ${here}）。\nブラウザを閉じて開き直してください。`,
   'br.oldTabHow': () =>
@@ -224,6 +228,13 @@ function openBridge({
               if (targetId !== who) onLog(`[bridge:${port}] 送り先のタブ: ${who}`);
               targetId = who;
               sock = ws;
+
+              try {
+
+                portlock.markTab(openedPort, true);
+              } catch {
+
+              }
 
               generation += 1;
               tabProtocol = m.protocol || 0;
@@ -510,6 +521,11 @@ function openBridge({
 
           if (sock !== ws) return;
           sock = null;
+          try {
+            portlock.markTab(openedPort, false);
+          } catch {
+
+          }
           if (waiting) {
             const w = waiting;
             waiting = null;
@@ -573,6 +589,11 @@ function openBridge({
       targetId = null;
       tabProtocol = 0;
       try {
+        portlock.markTab(openedPort, false);
+      } catch {
+
+      }
+      try {
         going.close();
       } catch {
 
@@ -600,10 +621,12 @@ function openBridge({
     function noTabWhy() {
       const others = liveOthers();
       if (!others.length) return t('br.noTab');
-      const who = others[0];
+
+      const holder = others.find((o) => o.hasTab);
+      if (!holder) return t('br.noTab') + '\n' + t('br.nobodyHolds', { port: openedPort });
       return (
-        t('br.tabElsewhere', { port: who.port }) +
-        (who.workspace ? '\n' + t('br.heldWhere', { where: who.workspace }) : '') +
+        t('br.tabElsewhere', { port: holder.port }) +
+        (holder.workspace ? '\n' + t('br.heldWhere', { where: holder.workspace }) : '') +
         '\n' +
         t('br.tabElsewhereHow')
       );

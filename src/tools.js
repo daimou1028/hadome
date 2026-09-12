@@ -82,19 +82,23 @@ function mergeDenylist(extra, onDropped = (x) => {
 
 function denyReason(command, denylist = DEFAULT_DENYLIST) {
   const c = String(command || '').trim().replace(/\s+/g, ' ');
+
+  const 当たり = [];
   for (const rule of denylist) {
     const re = rule.re instanceof RegExp ? rule.re : new RegExp(rule.re);
-
-    if (re.test(c)) {
-      return {
-        why: rule.why || '否決の表に当たりました',
-        key: rule.key || 'tool.deny.other',
-
-        一度だけ許せる: rule.一度だけ許せる === true,
-      };
-    }
+    if (re.test(c)) 当たり.push(rule);
   }
-  return null;
+  if (!当たり.length) return null;
+
+  const 硬い = 当たり.find((r) => r.一度だけ許せる !== true) || 当たり[0];
+
+  return {
+
+    why: 当たり.map((r) => r.why || '否決の表に当たりました').join('\n'),
+    key: 硬い.key || 'tool.deny.other',
+
+    一度だけ許せる: 当たり.every((r) => r.一度だけ許せる === true),
+  };
 }
 
 class ToolError extends Error {
@@ -773,7 +777,7 @@ function makeTools({
 
   if (browserPath) process.env.BRIDGE_BROWSER_PATH = browserPath;
 
-  const 目印を読む = (call) => {
+  const 目印を読む = (call, 深さ = 0) => {
     const 目印 = {
       role: String(call.role || '').trim(),
       name: String(call.name || '').trim(),
@@ -781,6 +785,16 @@ function makeTools({
       text: String(call.text || '').trim(),
       key: String(call.key || '').trim(),
     };
+
+    if (call.中 && typeof call.中 === 'object' && !Array.isArray(call.中)) {
+      if (深さ >= 5) {
+        throw new ToolError(
+          '入れ子が深すぎます（5 段 まで）。browser_read の写しを見て、近い入れ物から書いてください。',
+          'tool.browserNestTooDeep'
+        );
+      }
+      目印.中 = 目印を読む(call.中, 深さ + 1);
+    }
     if (!目印.role && !目印.selector && !目印.text && !目印.key) {
       throw new ToolError(
         'role（と name）か、selector か、text を渡してください。\n' +
@@ -790,10 +804,13 @@ function makeTools({
     }
     return 目印;
   };
-  const 目印の字 = (目印) =>
-    目印.role
+  const 目印の字 = (目印) => {
+    const 頭 = 目印.role
       ? `${目印.role}${目印.name ? ` "${目印.name}"` : ''}`
       : 目印.selector || 目印.text || 目印.key || '(焦点)';
+
+    return 目印.中 ? `${頭} > ${目印の字(目印.中)}` : 頭;
+  };
 
   const 開いたタブ = new Map(openTabsIn || []);
 
@@ -804,7 +821,8 @@ function makeTools({
     try {
       return !!isRevoked({ kind, detail: String(detail) });
     } catch {
-      return false;
+
+      return true;
     }
   };
 
@@ -994,7 +1012,9 @@ function makeTools({
 
         throw new ToolError(
           `押せませんでした: ${(r && r.why) || '理由が返りません'}（当たり ${(r && r.n) || 0} 件）\n` +
-            'browser_read で頁を読んでから、selector を絞ってください。',
+            'browser_read で頁を読んでから、絞ってください。\n' +
+            '同じ名前が並ぶ時は、入れ物で絞れます（写しの入れ子のとおりに書けます）:\n' +
+            '  {"role":"row","name":"田中","中":{"role":"button","name":"編輯"}}',
           'tool.browserClickFail',
           { why: (r && r.why) || '', n: String((r && r.n) || 0) }
         );
@@ -2200,7 +2220,7 @@ function makeTools({
             }
           }
 
-        } else if (denied && !(denied.一度だけ許せる && answer === 'once')) {
+        } else if (denied && !(denied.一度だけ許せる && answer === 'once' && !guardedPath && !meta)) {
 
           const 断りの理由 = !askPermission
             ? ''
