@@ -37,6 +37,11 @@ if (require.main === module) {
   await esbuild.build(opts);
   const fs = require('fs');
 
+  if (production) {
+    const sourcemap = `${opts.outfile}.map`;
+    if (fs.existsSync(sourcemap)) fs.unlinkSync(sourcemap);
+  }
+
   const stamp = require('./lib/uistamp');
   const mark = `\nwindow.__BUNDLE__ = ${JSON.stringify(stamp.fingerprint())};\n`;
   fs.appendFileSync(opts.outfile, mark);

@@ -37,7 +37,7 @@ try {
   const buildPackage = { ...originalPackage, version: VSIX_VERSION };
   writeJson(PACKAGE_JSON, buildPackage);
 
-  execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
+  execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:prod'], {
     cwd: REPO,
     stdio: 'inherit',
   });
