@@ -120,6 +120,7 @@ function openBridge({
   t: tIn = null,
 
   workspace = '',
+  WebSocketServerImpl = WebSocketServer,
 } = {}) {
   const t = (k, v) => (tIn ? tIn(k, v) : JA_FALLBACK[k](v || {}));
   return new Promise((resolve, reject) => {
@@ -128,7 +129,7 @@ function openBridge({
     let openedPort = port;
     const roam = port === portlock.PORT_FROM;
     try {
-      server = new WebSocketServer({ host: '127.0.0.1', port });
+      server = new WebSocketServerImpl({ host: '127.0.0.1', port });
     } catch (e) {
       reject(new Error(t('br.portOpen', { port, why: e.message })));
       return;
@@ -187,7 +188,7 @@ function openBridge({
             } catch {
 
             }
-            server = new WebSocketServer({ host: '127.0.0.1', port: openedPort });
+            server = new WebSocketServerImpl({ host: '127.0.0.1', port: openedPort });
             wireServer();
             return;
           }
