@@ -16,7 +16,7 @@
 
 - 新增 `commandPrograms()` 詞法分析，把複合指令拆成 `segments`（各段完整文字）與 `progs`（程式名集合），並回報 `unsafe` 原因。
 - 守門判斷式改為：複合指令若能安全解析、且**每一段**都命中許可清單，就直接放行。
-- 無法安全解析時（命令替換、`RUNS_ANYTHING`、`find -exec`、危險重導向、詞法失敗）**不提供**按鈕，並在對話框說明原因。
+- 無法安全解析時（命令替換、`RUNS_ANYTHING`、`find -exec`、危險重導向、前置環境變數賦值、詞法失敗）**不提供**按鈕，並在對話框說明原因。
 - `RUNS_ANYTHING` 補上 `command`，堵住 `command -v X` 繞過程式名判定的路徑。
 
 **刻意的行為擴張**：由已許可指令組成的複合指令（如 `git status && git diff`）從此不再詢問，不需按任何按鈕。
@@ -39,7 +39,7 @@
 |---|---|
 | `src/tools.js` | 新增並匯出 `commandPrograms()`；改 `run_command` 守門判斷式；`always` 型別擴充為 `string \| string[]`；`RUNS_ANYTHING` 補 `command`；ask 負載新增 `whyKey` |
 | `extension.js` | `askPermissionFromPanel()` 處理陣列 `always` 與 `whyKey`；`allowAlwaysCommand()` 接受陣列 |
-| `src/i18n/zh-tw.js`、`ja.js`、`en.js` | 新增 `action.allowPrograms` 與 5 個 `cmd.unsafe.*` 字串 |
+| `src/i18n/zh-tw.js`、`ja.js`、`en.js` | 新增 `action.allowPrograms` 與 6 個 `cmd.unsafe.*` 字串 |
 | `test/tools.test.js` | `commandPrograms()` 單元測試 |
 
 **不受影響**：`webview/panel.html`（對話框由 `actions` 陣列驅動）、`package.json`、`webview/src/ui/modeCycle.js`、`chatgptBridge.allowlist` 的儲存範圍與 `forgetAllowed()` 回收機制。

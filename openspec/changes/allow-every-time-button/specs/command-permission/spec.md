@@ -62,8 +62,9 @@
 | `cmd.unsafe.substitution` | 引號外出現 `$(` 或反引號 |
 | `cmd.unsafe.runsAnything` | 任一程式屬於 `RUNS_ANYTHING` |
 | `cmd.unsafe.findExec` | `find` 帶 `-exec`、`-execdir`、`-ok`、`-okdir`、`-delete` |
-| `cmd.unsafe.redirect` | `>` 或 `>>` 的目標不是 `/dev/null` 也不是工作區內相對路徑 |
-| `cmd.unsafe.parse` | 詞法分析失敗（未閉合引號等） |
+| `cmd.unsafe.redirect` | `>`、`>>`、`<` 的目標不是 `/dev/null`、不是 fd 複製，也不是工作區內相對路徑 |
+| `cmd.unsafe.assignment` | 指令位置出現前置環境變數賦值（`FOO=bar cmd`） |
+| `cmd.unsafe.parse` | 詞法分析失敗（未閉合引號等），或指令位置的程式名含 `$`／反引號 |
 
 `RUNS_ANYTHING` MUST 包含 `command`。
 
@@ -91,6 +92,11 @@
 
 - **WHEN** 收到 `echo x > ~/.zshrc`
 - **THEN** 對話框僅顯示「只允許這次」與「拒絕」，並附上 `cmd.unsafe.redirect` 的說明
+
+#### Scenario: 前置環境變數賦值不可記憶
+
+- **WHEN** 收到 `LD_PRELOAD=/tmp/evil.so ls` 或 `PATH=/tmp/evil git status`
+- **THEN** 系統回報 `cmd.unsafe.assignment`，不提供按鈕
 
 #### Scenario: 詞法分析失敗時保守處理
 

@@ -2856,7 +2856,7 @@ const uriHandler = {
 
 let pendingCommand = null;
 
-function askPermissionFromPanel({ kind, detail, always }) {
+function askPermissionFromPanel({ kind, detail, always, whyKey }) {
   return new Promise((resolve) => {
 
     if (pendingCommand) pendingCommand.resolve('no');
@@ -2903,7 +2903,7 @@ function askPermissionFromPanel({ kind, detail, always }) {
       ),
 
       kind,
-      detail,
+      detail: whyKey ? `${detail}\n（${t(whyKey)}）` : detail,
       actions: [
         { label: t('action.runOnce'), action: 'askrun', answer: 'once' },
 
@@ -2918,7 +2918,9 @@ function askPermissionFromPanel({ kind, detail, always }) {
                       ? t('action.allowServer', { server: always })
                       : isBrowser
                         ? t('action.allowSite', { site: always })
-                        : t('action.allowProgram', { prog: always }),
+                        : Array.isArray(always)
+                          ? t('action.allowPrograms', { progs: always.join(', ') })
+                          : t('action.allowProgram', { prog: always }),
                 action: 'askrun',
                 answer: 'always',
               },
@@ -3503,9 +3505,11 @@ async function allowAlways({ kind, detail }) {
 async function allowAlwaysCommand(cmd) {
   const c = vscode.workspace.getConfiguration();
   const now = c.get('chatgptBridge.allowlist', []);
-  if (now.includes(cmd)) return;
-  await c.update('chatgptBridge.allowlist', now.concat([cmd]), vscode.ConfigurationTarget.Workspace);
-  post({ type: 'note', text: t('note.allowedAlways', { cmd }) });
+
+  const add = (Array.isArray(cmd) ? cmd : [cmd]).filter((x, i, a) => !now.includes(x) && a.indexOf(x) === i);
+  if (!add.length) return;
+  await c.update('chatgptBridge.allowlist', now.concat(add), vscode.ConfigurationTarget.Workspace);
+  post({ type: 'note', text: t('note.allowedAlways', { cmd: add.join(', ') }) });
 }
 
 function activate(context) {

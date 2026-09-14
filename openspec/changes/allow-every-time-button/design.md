@@ -51,6 +51,12 @@ if (denied || meta || guardedPath || !isAllowed(cmd, allowlist)) {
 
 `>` 屬於 `SHELL_META`，若一律視為 unsafe，`2>/dev/null` 這種極常見的寫法就拿不到按鈕。改為檢查重導向目標：`/dev/null` 或工作區內相對路徑視為安全，其餘 unsafe。放行工作區內寫入與 `edit` 模式的既有語意一致。
 
+### D4b：前置環境變數賦值一律不可記憶（實作中發現）
+
+原設計把 `FOO=bar cmd` 的賦值視為「跳過」，讓 `cmd` 成為程式名。實作後發現這會開出一條提權路徑：`NODE_ENV=test npm test` 被剝掉賦值後兩段都命中清單而自動放行，等同於 `LD_PRELOAD=/tmp/evil.so ls`、`PATH=/tmp/evil git status` 也會自動放行。現行程式碼原本靠 `leadingAssignment()` 把這類指令歸入 `meta` 而一律詢問，這道防線不能拆。
+
+因此新增第六個原因鍵 `cmd.unsafe.assignment`：指令位置一出現賦值即判為不可記憶。
+
 ### D5：unsafe 原因以 key 傳遞而非內嵌字串
 
 既有的 denylist 把日文 `why` 直接內嵌進 `detail`，在中／英文介面下會露出日文。新機制改於 ask 負載加 `whyKey` 欄位，由 `extension.js` 翻譯後附上，避免延續這個問題。
