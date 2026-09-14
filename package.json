@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.10",
+  "version": "0.1.10.2",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -711,10 +711,12 @@
     ]
   },
   "scripts": {
+    "test": "node --test test/*.test.js",
     "build": "node tools/build-webview.js",
+    "build:prod": "node tools/build-webview.js --production",
     "watch": "node tools/build-webview.js --watch",
     "prepare": "node tools/build-webview.js && node tools/install-git-hooks.js",
-    "package": "npm run build && vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links",
+    "package": "node tools/package-extension.js",
     "package:chrome": "node tools/package-chrome.js",
     "hooks:install": "node tools/install-git-hooks.js",
     "browser": "node tools/bridge-browser.js"

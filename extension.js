@@ -61,6 +61,7 @@ const SECONDARY_SINCE = { major: 1, minor: 106 };
 
 const BEFORE_SCHEME = 'chatgpt-bridge-before';
 const beforeStore = new Map();
+const BEFORE_KEEP = 200;
 
 const beforeProvider = {
   provideTextDocumentContent(uri) {
@@ -207,8 +208,14 @@ function log(s) {
   if (channel) channel.appendLine(s);
 }
 
+function sendTo(webviewView, type, data, id) {
+  if (webviewView) {
+    webviewView.webview.postMessage({ type, data: data || {}, id: id || null });
+  }
+}
+
 function send(type, data, id) {
-  if (view) view.webview.postMessage({ type, data: data || {}, id: id || null });
+  sendTo(view, type, data, id);
 }
 
 function post(msg) {
@@ -587,23 +594,28 @@ async function handleRun(task) {
   }
   const { port, allowlist, denylist, maxTurns, requireRestorePoint, protectSecrets } = settings();
 
-  let mcpGot = null;
-  if (settings().mcp) {
-    try {
-      mcpGot = await mcp.connectAll(mcp.loadServers(), { log });
-      if (mcpGot.failed.length) {
-        for (const f2 of mcpGot.failed) {
-          post({ type: 'note', text: t('mcp.failed', { name: f2.name, why: f2.why }) });
+  async function setupMcp() {
+    let mcpGot = null;
+    if (settings().mcp) {
+      try {
+        mcpGot = await mcp.connectAll(mcp.loadServers(), { log });
+        if (mcpGot.failed.length) {
+          for (const f2 of mcpGot.failed) {
+            post({ type: 'note', text: t('mcp.failed', { name: f2.name, why: f2.why }) });
+          }
         }
+        if (mcpGot.tools.length) {
+          post({ type: 'note', text: t('mcp.ready', { n: mcpGot.tools.length, servers: mcpGot.clients.size }) });
+        }
+      } catch (e) {
+        log(`[mcp] 立ち上げに失敗: ${e.message}`);
+        mcpGot = null;
       }
-      if (mcpGot.tools.length) {
-        post({ type: 'note', text: t('mcp.ready', { n: mcpGot.tools.length, servers: mcpGot.clients.size }) });
-      }
-    } catch (e) {
-      log(`[mcp] 立ち上げに失敗: ${e.message}`);
-      mcpGot = null;
     }
+    return mcpGot;
   }
+
+  let mcpGot = await setupMcp();
 
   s.busy = true;
 
@@ -664,482 +676,496 @@ async function handleRun(task) {
 
     let touched = false;
 
-    let taskText = attachBangs(task, pendingBangs);
-    pendingBangs = [];
-    let mentioned = parseMentions(task);
+    async function buildTaskAttachments() {
+      let taskText = attachBangs(task, pendingBangs);
+      pendingBangs = [];
+      let mentioned = parseMentions(task);
 
-    const uploadFiles = [];
+      const uploadFiles = [];
 
-    if (mentioned.length > 0) {
-      const plan = planMentions(mentioned, (p) => {
-        try {
-          const full = resolveInside(s.root, p);
-          const st = fs.statSync(full);
-          if (!st.isFile()) return null;
-
-          const fd = fs.openSync(full, 'r');
-          const head = Buffer.alloc(Math.min(512, st.size));
+      if (mentioned.length > 0) {
+        const plan = planMentions(mentioned, (p) => {
           try {
-            if (head.length) fs.readSync(fd, head, 0, head.length, 0);
-          } finally {
-            fs.closeSync(fd);
-          }
-          return { size: st.size, head };
-        } catch {
-          return null;
-        }
-      });
-      if (plan.upload.length) {
-        post({ type: 'note', text: t('up.sending', { list: plan.upload.join(' / ') }) });
-        for (const p of plan.upload) {
-          try {
-            uploadFiles.push({
-              name: path.basename(p),
-              mime: mimeOf(p),
-              b64: fs.readFileSync(resolveInside(s.root, p)).toString('base64'),
-            });
-          } catch (e) {
-            plan.skipped.push({ path: p, why: e.message });
-          }
-        }
-      }
-      for (const sk of plan.skipped) {
-        post({ type: 'note', text: t('note.notAttached', { path: sk.path, why: sk.why }) });
-      }
+            const full = resolveInside(s.root, p);
+            const st = fs.statSync(full);
+            if (!st.isFile()) return null;
 
-      mentioned = plan.text;
-    }
-
-    if (mentioned.length > 0) {
-      const tools = makeTools({
-        root: s.root,
-        allowlist,
-        denylist,
-        protectSecrets,
-        disabled: settings().disabledTools,
-      });
-
-      const readOrProblems = async (call) => {
-        if (String(call && call.path) !== PROBLEMS_MARK) return tools.read_file(call);
-        return { ok: true, output: collectProblems(s.root) };
-      };
-      const att = await buildAttachment(readOrProblems, mentioned, {
-
-        exists: (p) => {
-
-          if (p === PROBLEMS_MARK) return true;
-          try {
-            return fs.existsSync(resolveInside(s.root, p));
+            const fd = fs.openSync(full, 'r');
+            const head = Buffer.alloc(Math.min(512, st.size));
+            try {
+              if (head.length) fs.readSync(fd, head, 0, head.length, 0);
+            } finally {
+              fs.closeSync(fd);
+            }
+            return { size: st.size, head };
           } catch {
-
-            return false;
+            return null;
           }
-        },
-      });
+        });
+        if (plan.upload.length) {
+          post({ type: 'note', text: t('up.sending', { list: plan.upload.join(' / ') }) });
+          for (const p of plan.upload) {
+            try {
+              uploadFiles.push({
+                name: path.basename(p),
+                mime: mimeOf(p),
+                b64: fs.readFileSync(resolveInside(s.root, p)).toString('base64'),
+              });
+            } catch (e) {
+              plan.skipped.push({ path: p, why: e.message });
+            }
+          }
+        }
+        for (const sk of plan.skipped) {
+          post({ type: 'note', text: t('note.notAttached', { path: sk.path, why: sk.why }) });
+        }
 
-      taskText = taskText + att.text;
-      const parts = [];
-      if (att.attached.length) parts.push(t('note.attached', { list: att.attached.join(' / ') }));
-      for (const sk of att.skipped) parts.push(t('note.notAttached', { path: sk.path, why: sk.why }));
-      post({ type: 'note', text: parts.join('\n') });
+        mentioned = plan.text;
+      }
+
+      if (mentioned.length > 0) {
+        const tools = makeTools({
+          root: s.root,
+          allowlist,
+          denylist,
+          protectSecrets,
+          disabled: settings().disabledTools,
+        });
+
+        const readOrProblems = async (call) => {
+          if (String(call && call.path) !== PROBLEMS_MARK) return tools.read_file(call);
+          return { ok: true, output: collectProblems(s.root) };
+        };
+        const att = await buildAttachment(readOrProblems, mentioned, {
+
+          exists: (p) => {
+
+            if (p === PROBLEMS_MARK) return true;
+            try {
+              return fs.existsSync(resolveInside(s.root, p));
+            } catch {
+
+              return false;
+            }
+          },
+        });
+
+        taskText = taskText + att.text;
+        const parts = [];
+        if (att.attached.length) parts.push(t('note.attached', { list: att.attached.join(' / ') }));
+        for (const sk of att.skipped) parts.push(t('note.notAttached', { path: sk.path, why: sk.why }));
+        post({ type: 'note', text: parts.join('\n') });
+      }
+      return { taskText, uploadFiles };
     }
+
+    const { taskText, uploadFiles } = await buildTaskAttachments();
 
     const sendingInstruction = !s.started;
 
-    const result = await runAgent({
+    function buildAgentCallbacks() {
+      return {
 
-      mcp: mcpGot,
+        mcp: mcpGot,
 
-      mode: settings().mode,
+        mode: settings().mode,
 
-      restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
+        restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
 
-      tr: (k, v) => t(k, v),
+        tr: (k, v) => t(k, v),
 
-      outputStyle: globalrules.loadOutputStyle(settings().outputStyle),
+        outputStyle: globalrules.loadOutputStyle(settings().outputStyle),
 
-      readOnly: settings().mode === 'plan',
+        readOnly: settings().mode === 'plan',
 
-      planMode: settings().mode === 'plan',
+        planMode: settings().mode === 'plan',
 
-      readSetting: (k) => vscode.workspace.getConfiguration().get(`chatgptBridge.${k}`),
-      writeSetting: async (k, v) =>
-        vscode.workspace
-          .getConfiguration()
-          .update(`chatgptBridge.${k}`, v, vscode.ConfigurationTarget.Workspace),
+        readSetting: (k) => vscode.workspace.getConfiguration().get(`chatgptBridge.${k}`),
+        writeSetting: async (k, v) =>
+          vscode.workspace
+            .getConfiguration()
+            .update(`chatgptBridge.${k}`, v, vscode.ConfigurationTarget.Workspace),
 
-      onExitPlan: async () => {
-        await vscode.workspace
-          .getConfiguration()
-          .update('chatgptBridge.mode', 'edit', vscode.ConfigurationTarget.Workspace);
-        post({ type: 'note', text: t('note.planAccepted') });
-      },
+        onExitPlan: async () => {
+          await vscode.workspace
+            .getConfiguration()
+            .update('chatgptBridge.mode', 'edit', vscode.ConfigurationTarget.Workspace);
+          post({ type: 'note', text: t('note.planAccepted') });
+        },
 
-      disabledTools: settings().disabledTools,
-      modes: settings().modes,
+        disabledTools: settings().disabledTools,
+        modes: settings().modes,
 
-      startMode,
+        startMode,
 
-      beforeTouch: (abs) => saveIfDirty(abs),
-      afterTouch: (abs) => problemsAfterTouch(abs),
+        beforeTouch: (abs) => saveIfDirty(abs),
+        afterTouch: (abs) => problemsAfterTouch(abs),
 
-      respectGitIgnore: settings().respectGitIgnore,
-      preventDoneWithOpenTodos: settings().preventDoneWithOpenTodos,
+        respectGitIgnore: settings().respectGitIgnore,
+        preventDoneWithOpenTodos: settings().preventDoneWithOpenTodos,
 
-      onTurnsExhausted: ({ turns }) => askMoreTurns(s, turns),
+        onTurnsExhausted: ({ turns }) => askMoreTurns(s, turns),
 
-      onFailingStreak: ({ times, why }) => askFailingStreak(times, why),
-      onSilentStreak: ({ times, why, calledEver }) => askSilentStreak(times, why, calledEver),
+        onFailingStreak: ({ times, why }) => askFailingStreak(times, why),
+        onSilentStreak: ({ times, why, calledEver }) => askSilentStreak(times, why, calledEver),
 
-      onDowngrade: (info) => askDowngrade(info),
-      onTodosOpen: ({ left }) => askTodosOpen(left),
+        onDowngrade: (info) => askDowngrade(info),
+        onTodosOpen: ({ left }) => askTodosOpen(left),
 
-      hasProjectRules: () => hasProjectRules(),
-      isInProject: () => {
-        try {
-          const url = s.bridge ? s.bridge.tabUrl() : '';
-          const home =
-            s.projectUrl ||
-            settings().projectUrl ||
-            projectHomeOf((current && current.conversationUrl) || '');
-          return !!url && !!home && inProject(url, home);
-        } catch {
-          return false;
-        }
-      },
+        hasProjectRules: () => hasProjectRules(),
+        isInProject: () => {
+          try {
+            const url = s.bridge ? s.bridge.tabUrl() : '';
+            const home =
+              s.projectUrl ||
+              settings().projectUrl ||
+              projectHomeOf((current && current.conversationUrl) || '');
+            return !!url && !!home && inProject(url, home);
+          } catch {
+            return false;
+          }
+        },
 
-      onGoalCheck: ({ summary, wrote }) => checkGoal(summary, wrote),
+        onGoalCheck: ({ summary, wrote }) => checkGoal(summary, wrote),
 
-      files: uploadFiles,
-      onUpload: (up) => {
-        if (up.uploaded && up.uploaded.length) {
-          post({ type: 'note', text: t('up.done', { list: up.uploaded.join(' / ') }) });
-        }
+        files: uploadFiles,
+        onUpload: (up) => {
+          if (up.uploaded && up.uploaded.length) {
+            post({ type: 'note', text: t('up.done', { list: up.uploaded.join(' / ') }) });
+          }
 
-        for (const nm of up.failed || []) {
-          post({ type: 'note', text: t('up.failed', { name: nm, why: '' }) });
-        }
-      },
+          for (const nm of up.failed || []) {
+            post({ type: 'note', text: t('up.failed', { name: nm, why: '' }) });
+          }
+        },
 
-      onLimits: (list) => {
+        onLimits: (list) => {
 
-        try {
-          if (Array.isArray(list) && list.length) remember({ type: 'limits', text: JSON.stringify(list) });
-        } catch {
+          try {
+            if (Array.isArray(list) && list.length) remember({ type: 'limits', text: JSON.stringify(list) });
+          } catch {
 
-        }
-        const f = (list || []).find((x) => x && x.feature_name === 'file_upload');
-        if (!f || Number(f.remaining) > 0) return;
-        const min = minutesUntil(f.reset_after);
-        const when =
-          min == null
-            ? ''
-            : min < 60
-              ? t('up.backMin', { n: min })
-              : t('up.backHour', { h: Math.floor(min / 60), m: min % 60 });
-        post({ type: 'note', text: t('up.noQuota', { when }) });
-      },
+          }
+          const f = (list || []).find((x) => x && x.feature_name === 'file_upload');
+          if (!f || Number(f.remaining) > 0) return;
+          const min = minutesUntil(f.reset_after);
+          const when =
+            min == null
+              ? ''
+              : min < 60
+                ? t('up.backMin', { n: min })
+                : t('up.backHour', { h: Math.floor(min / 60), m: min % 60 });
+          post({ type: 'note', text: t('up.noQuota', { when }) });
+        },
 
-      hookConfig: (() => {
-        try {
-          const p = path.join(s.root, '.chatgpt-bridge', 'hooks.json');
-          if (!fs.existsSync(p)) return null;
-          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-          const n = Object.keys(j || {}).length;
-          if (n) log(`[hook] ${p} を読みました（${n} 種）`);
-          return j;
-        } catch (e) {
+        hookConfig: (() => {
+          try {
+            const p = path.join(s.root, '.chatgpt-bridge', 'hooks.json');
+            if (!fs.existsSync(p)) return null;
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const n = Object.keys(j || {}).length;
+            if (n) log(`[hook] ${p} を読みました（${n} 種）`);
+            return j;
+          } catch (e) {
 
-          post({ type: 'note', text: t('hook.badConfig', { why: e.message }) });
-          return null;
-        }
-      })(),
+            post({ type: 'note', text: t('hook.badConfig', { why: e.message }) });
+            return null;
+          }
+        })(),
 
-      seenUrls: (() => {
-        const set = s.seenUrls || (s.seenUrls = new Set());
-        for (const u of collectUrls(task)) set.add(u);
-        return set;
-      })(),
+        seenUrls: (() => {
+          const set = s.seenUrls || (s.seenUrls = new Set());
+          for (const u of collectUrls(task)) set.add(u);
+          return set;
+        })(),
 
-      readSkills: (() => {
-        const conv = s.bridge ? s.bridge.conversationId() : '';
-        if (s.readSkillsConv !== conv) {
-          s.readSkillsConv = conv;
-          s.readSkills = new Set();
-        }
-        return s.readSkills;
-      })(),
+        readSkills: (() => {
+          const conv = s.bridge ? s.bridge.conversationId() : '';
+          if (s.readSkillsConv !== conv) {
+            s.readSkillsConv = conv;
+            s.readSkills = new Set();
+          }
+          return s.readSkills;
+        })(),
 
-      onTurn: ({ turn, limit }) => {
+        onTurn: ({ turn, limit }) => {
 
-        s.gotTurns = s.gotChars || 0;
-        post({
-          type: 'turn',
-
-          label: limit ? t('state.turn', { n: turn, of: limit }) : t('state.turnOnly', { n: turn }),
-
-          startedAt: s.startedAt || null,
-
-          tools: s.toolCount || 0,
-          wrote: s.wroteFiles ? s.wroteFiles.size : 0,
-
-          got: s.gotChars || 0,
-
-          usage: (() => {
-            try {
-              const u = s.bridge && s.bridge.conversationUsage ? s.bridge.conversationUsage() : null;
-              if (!u) return null;
-              return describeUsage(
-                u,
-                vscode.workspace.getConfiguration().get('chatgptBridge.contextWindow', 0)
-              );
-            } catch {
-
-              return null;
-            }
-          })(),
-
-          turn,
-        });
-      },
-
-      onTodos: (todos) => {
-        post({ type: 'todos', todos });
-        remember({ type: 'todos', todos });
-      },
-      onCommandOutput: ({ id, command, chunk, started }) => {
-        post({
-          type: 'cmdout',
-          id: String(id || ''),
-          command: String(command || ''),
-          chunk: String(chunk || ''),
-
-          started: !!started,
-        });
-      },
-      bridge: s.bridge,
-      root: s.root,
-      task: taskText,
-      allowlist,
-      denylist,
-      maxTurns,
-      workspaceName: path.basename(s.root),
-      requireRestorePoint,
-      protectSecrets,
-
-      includeInstruction: sendingInstruction,
-      askPermission: askPermissionFromPanel,
-
-      allowedOutside: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutside', []),
-      allowedOutsideWrite: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutsideWrite', []),
-
-      allowedMcpServers: vscode.workspace.getConfiguration().get('chatgptBridge.allowedMcpServers', []),
-
-      allowedSites: vscode.workspace.getConfiguration().get('chatgptBridge.allowedSites', []),
-
-      openTabs: s.openTabs || null,
-      onOpenTabs: (list) => {
-        s.openTabs = list && list.length ? list : null;
-      },
-      onAllowAlways: allowAlways,
-
-      spawnAgents: makeSpawner(s, { maxTurns, protectSecrets }),
-
-      locale: localeNow(),
-
-      global: loadGlobal(s.root),
-      shouldStop: () => s.cancel,
-      onLog: (line) => {
-        log(line);
-
-        const rp = /^\[agent\] checkpoint: (.+)$/.exec(line);
-        if (rp) {
-          const sha = /^[0-9a-f]{7,40}$/.test(rp[1]) ? rp[1] : null;
+          s.gotTurns = s.gotChars || 0;
           post({
-            type: 'note',
-            text: sha ? t('note.restorePoint', { sha }) : t('note.restorePointNone'),
+            type: 'turn',
+
+            label: limit ? t('state.turn', { n: turn, of: limit }) : t('state.turnOnly', { n: turn }),
+
+            startedAt: s.startedAt || null,
+
+            tools: s.toolCount || 0,
+            wrote: s.wroteFiles ? s.wroteFiles.size : 0,
+
+            got: s.gotChars || 0,
+
+            usage: (() => {
+              try {
+                const u = s.bridge && s.bridge.conversationUsage ? s.bridge.conversationUsage() : null;
+                if (!u) return null;
+                return describeUsage(
+                  u,
+                  vscode.workspace.getConfiguration().get('chatgptBridge.contextWindow', 0)
+                );
+              } catch {
+
+                return null;
+              }
+            })(),
+
+            turn,
           });
-        }
-      },
+        },
 
-      onNotice: (n) => {
-        const make = {
-          tooLong: () => t('note.sentAsFile', { chars: String(n.chars || '') }),
-          sameCall: () => t('note.sameCall', { n: String(n.n || '?') }),
-          delivered: () => t('note.notResending'),
-          resend: () => t('note.resendingOnce'),
+        onTodos: (todos) => {
+          post({ type: 'todos', todos });
+          remember({ type: 'todos', todos });
+        },
+        onCommandOutput: ({ id, command, chunk, started }) => {
+          post({
+            type: 'cmdout',
+            id: String(id || ''),
+            command: String(command || ''),
+            chunk: String(chunk || ''),
 
-          policy: () => t('note.policy', { why: String(n.why || '') }),
-          restart: () => {
+            started: !!started,
+          });
+        },
+        bridge: s.bridge,
+        root: s.root,
+        task: taskText,
+        allowlist,
+        denylist,
+        maxTurns,
+        workspaceName: path.basename(s.root),
+        requireRestorePoint,
+        protectSecrets,
 
-            s.modelSlug = null;
+        includeInstruction: sendingInstruction,
+        askPermission: askPermissionFromPanel,
 
-            if (!n.why) return t('note.restarted');
-            return t('note.restartedWhy', {
-              n: String(n.n || '?'),
-              max: String(n.max || '?'),
-              why: t('restartWhy.' + n.why),
+        allowedOutside: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutside', []),
+        allowedOutsideWrite: vscode.workspace.getConfiguration().get('chatgptBridge.allowedOutsideWrite', []),
+
+        allowedMcpServers: vscode.workspace.getConfiguration().get('chatgptBridge.allowedMcpServers', []),
+
+        allowedSites: vscode.workspace.getConfiguration().get('chatgptBridge.allowedSites', []),
+
+        openTabs: s.openTabs || null,
+        onOpenTabs: (list) => {
+          s.openTabs = list && list.length ? list : null;
+        },
+        onAllowAlways: allowAlways,
+
+        spawnAgents: makeSpawner(s, { maxTurns, protectSecrets }),
+
+        locale: localeNow(),
+
+        global: loadGlobal(s.root),
+        shouldStop: () => s.cancel,
+        onLog: (line) => {
+          log(line);
+
+          const rp = /^\[agent\] checkpoint: (.+)$/.exec(line);
+          if (rp) {
+            const sha = /^[0-9a-f]{7,40}$/.test(rp[1]) ? rp[1] : null;
+            post({
+              type: 'note',
+              text: sha ? t('note.restorePoint', { sha }) : t('note.restorePointNone'),
             });
-          },
+          }
+        },
 
-          doneWithoutFile: () => t('note.doneWithoutFile'),
+        onNotice: (n) => {
+          const make = {
+            tooLong: () => t('note.sentAsFile', { chars: String(n.chars || '') }),
+            sameCall: () => t('note.sameCall', { n: String(n.n || '?') }),
+            delivered: () => t('note.notResending'),
+            resend: () => t('note.resendingOnce'),
 
-          pace: () => t('note.pacing', { sec: String(Math.ceil(Number(n.ms || 0) / 1000)) }),
+            policy: () => t('note.policy', { why: String(n.why || '') }),
+            restart: () => {
 
-          waiting: () =>
-            t('note.waitingStrong', {
-              model: String(n.model || '?'),
-              when: n.hhmm ? t('downgrade.until', { hhmm: String(n.hhmm) }) : t('downgrade.unknownUntil'),
-              n: String(n.n || '?'),
-              max: String(n.max || '?'),
-            }),
-          resumed: () => t('note.resumedStrong'),
-          downgraded: () => t('note.downgradedStop', { model: String(n.model || '?') }),
-        }[n && n.kind];
-        if (!make) return;
-        const msg = { type: 'note', text: make() };
-        post(msg);
+              s.modelSlug = null;
 
-        if (n.kind === 'doneWithoutFile') remember(msg);
-      },
+              if (!n.why) return t('note.restarted');
+              return t('note.restartedWhy', {
+                n: String(n.n || '?'),
+                max: String(n.max || '?'),
+                why: t('restartWhy.' + n.why),
+              });
+            },
 
-      onAnswer: (text, turn, info) => post({ type: 'answer', text, ms: (info && info.ms) || null }),
-      onNoRestorePoint: (why) => {
-        s.noRestoreWhy = why;
-        warnNoRestorePoint(s);
-      },
-      onTool: (r) => {
+            doneWithoutFile: () => t('note.doneWithoutFile'),
 
-        let diffKey = null;
+            pace: () => t('note.pacing', { sec: String(Math.ceil(Number(n.ms || 0) / 1000)) }),
 
-        if (r.ok && (r.changed || r.tool === 'run_command')) touched = true;
-        if (r.ok && r.changed) {
-          diffKey = `/${Date.now()}-${diffSeq++}/${r.changed.path}`;
-          beforeStore.set(diffKey, r.changed.before);
+            waiting: () =>
+              t('note.waitingStrong', {
+                model: String(n.model || '?'),
+                when: n.hhmm ? t('downgrade.until', { hhmm: String(n.hhmm) }) : t('downgrade.unknownUntil'),
+                n: String(n.n || '?'),
+                max: String(n.max || '?'),
+              }),
+            resumed: () => t('note.resumedStrong'),
+            downgraded: () => t('note.downgradedStop', { model: String(n.model || '?') }),
+          }[n && n.kind];
+          if (!make) return;
+          const msg = { type: 'note', text: make() };
+          post(msg);
 
-          const abs = path.join(s.root, r.changed.path);
-          if (!originStore.has(abs)) originStore.set(abs, r.changed.before);
-          refreshOverlay(abs);
-        }
-        s.toolCount = (s.toolCount || 0) + 1;
-        if (r.ok && (r.tool === 'write_file' || r.tool === 'edit_file') && r.target) {
-          s.wroteFiles = s.wroteFiles || new Set();
-          s.wroteFiles.add(String(r.target));
-        }
+          if (n.kind === 'doneWithoutFile') remember(msg);
+        },
 
-        if (r.full && r.id) {
-          fullOutputs.set(String(r.id), String(r.full));
+        onAnswer: (text, turn, info) => post({ type: 'answer', text, ms: (info && info.ms) || null }),
+        onNoRestorePoint: (why) => {
+          s.noRestoreWhy = why;
+          warnNoRestorePoint(s);
+        },
+        onTool: (r) => {
 
-          while (fullOutputs.size > FULL_KEEP) fullOutputs.delete(fullOutputs.keys().next().value);
-        }
+          let diffKey = null;
+
+          if (r.ok && (r.changed || r.tool === 'run_command')) touched = true;
+          if (r.ok && r.changed) {
+            diffKey = `/${Date.now()}-${diffSeq++}/${r.changed.path}`;
+            beforeStore.set(diffKey, r.changed.before);
+            while (beforeStore.size > BEFORE_KEEP) beforeStore.delete(beforeStore.keys().next().value);
+
+            const abs = path.join(s.root, r.changed.path);
+            if (!originStore.has(abs)) originStore.set(abs, r.changed.before);
+            refreshOverlay(abs);
+          }
+          s.toolCount = (s.toolCount || 0) + 1;
+          if (r.ok && (r.tool === 'write_file' || r.tool === 'edit_file') && r.target) {
+            s.wroteFiles = s.wroteFiles || new Set();
+            s.wroteFiles.add(String(r.target));
+          }
+
+          if (r.full && r.id) {
+            fullOutputs.set(String(r.id), String(r.full));
+
+            while (fullOutputs.size > FULL_KEEP) fullOutputs.delete(fullOutputs.keys().next().value);
+          }
+          post({
+            type: 'tool',
+
+            ok: r.ok,
+
+            state: toolStateOf(r),
+            name: r.tool,
+            target: r.target || '',
+            why: r.ok ? '' : String(r.output || '').split('\n')[0],
+
+            output: clipForScreen(r.output),
+
+            fullLength: String(r.output || '').length,
+
+            fullChars: r.full ? String(r.full).length : null,
+            fullLines: r.full ? String(r.full).split('\n').length : null,
+
+            ms: r.ms || null,
+            diffKey,
+            newFile: r.changed ? !r.changed.existed : false,
+          });
+        },
+
+        onDelta: (text) => {
+
+          s.gotChars = (s.gotTurns || 0) + text.length;
+          if (text.length - shown < 400) return;
+          shown = text.length;
+          post({ type: 'delta', label, text });
+        },
+
+        onBusy: () => {
+          send('busy', { label });
+        },
+
+        onImage: (img) => {
+          post({ type: 'image', ...img });
+        },
+
+        onModel: (slug) => {
+          if (!slug || s.modelSlug === slug) return;
+          s.modelSlug = slug;
+          post({ type: 'model', text: slug });
+        },
+
+        onAutoSwitch: (m) => {
+          const seen = JSON.stringify(m);
+          if (s.lastAutoSwitch === seen) return;
+          s.lastAutoSwitch = seen;
+
+          remember({ type: 'autoswitch', ...m });
+        },
+      };
+    }
+
+    const result = await runAgent(buildAgentCallbacks());
+
+    function finishRun() {
+      s.started = true;
+
+      if (current && sendingInstruction) {
+        current.instructionSent = true;
+
+        current.rulesFingerprint = instructionFingerprint(s);
+      }
+
+      const convUrl = s.bridge.conversationUrl();
+      const convId = s.bridge.conversationId();
+      if (current && convId) {
+        current.conversationUrl = convUrl;
+        current.conversationId = convId;
+        sessions.save(storeRoot, current);
+      }
+      log(`\nstate: ${result.status} / ターン数: ${result.turns}`);
+
+      if (result.status === 'asked' && result.options) {
         post({
-          type: 'tool',
+          type: 'ask',
+          text: result.question,
+          kind: 'choice',
+          actions: result.options.map((o) => ({
+            label: o.label,
+            action: 'choice',
+            answer: o.label,
 
-          ok: r.ok,
-
-          state: toolStateOf(r),
-          name: r.tool,
-          target: r.target || '',
-          why: r.ok ? '' : String(r.output || '').split('\n')[0],
-
-          output: clipForScreen(r.output),
-
-          fullLength: String(r.output || '').length,
-
-          fullChars: r.full ? String(r.full).length : null,
-          fullLines: r.full ? String(r.full).split('\n').length : null,
-
-          ms: r.ms || null,
-          diffKey,
-          newFile: r.changed ? !r.changed.existed : false,
+            note: o.description,
+          })),
         });
-      },
+      }
 
-      onDelta: (text) => {
+      notifyIdle(
+        result.status === 'asked'
+          ? t('notify.asked', { name: path.basename(s.root) })
+          : t('notify.done', { name: path.basename(s.root) }),
 
-        s.gotChars = (s.gotTurns || 0) + text.length;
-        if (text.length - shown < 400) return;
-        shown = text.length;
-        post({ type: 'delta', label, text });
-      },
-
-      onBusy: () => {
-        send('busy', { label });
-      },
-
-      onImage: (img) => {
-        post({ type: 'image', ...img });
-      },
-
-      onModel: (slug) => {
-        if (!slug || s.modelSlug === slug) return;
-        s.modelSlug = slug;
-        post({ type: 'model', text: slug });
-      },
-
-      onAutoSwitch: (m) => {
-        const seen = JSON.stringify(m);
-        if (s.lastAutoSwitch === seen) return;
-        s.lastAutoSwitch = seen;
-
-        remember({ type: 'autoswitch', ...m });
-      },
-    });
-
-    s.started = true;
-
-    if (current && sendingInstruction) {
-      current.instructionSent = true;
-
-      current.rulesFingerprint = instructionFingerprint(s);
-    }
-
-    const convUrl = s.bridge.conversationUrl();
-    const convId = s.bridge.conversationId();
-    if (current && convId) {
-      current.conversationUrl = convUrl;
-      current.conversationId = convId;
-      sessions.save(storeRoot, current);
-    }
-    log(`\nstate: ${result.status} / ターン数: ${result.turns}`);
-
-    if (result.status === 'asked' && result.options) {
+        { needsYou: result.status === 'asked' }
+      );
       post({
-        type: 'ask',
-        text: result.question,
-        kind: 'choice',
-        actions: result.options.map((o) => ({
-          label: o.label,
-          action: 'choice',
-          answer: o.label,
+        type: 'result',
+        status: result.status,
+        turns: result.turns,
 
-          note: o.description,
-        })),
+        tools: s.toolCount || 0,
+        wrote: s.wroteFiles ? s.wroteFiles.size : 0,
+        ms: s.startedAt ? Date.now() - s.startedAt : 0,
+        detail: resultDetail(result),
+
+        sha:
+          result.startSha && checkpoint.changedSince(s.root, result.startSha)
+            ? result.startSha.slice(0, 8)
+            : null,
       });
     }
 
-    notifyIdle(
-      result.status === 'asked'
-        ? t('notify.asked', { name: path.basename(s.root) })
-        : t('notify.done', { name: path.basename(s.root) }),
-
-      { needsYou: result.status === 'asked' }
-    );
-    post({
-      type: 'result',
-      status: result.status,
-      turns: result.turns,
-
-      tools: s.toolCount || 0,
-      wrote: s.wroteFiles ? s.wroteFiles.size : 0,
-      ms: s.startedAt ? Date.now() - s.startedAt : 0,
-      detail: resultDetail(result),
-
-      sha:
-        result.startSha && checkpoint.changedSince(s.root, result.startSha)
-          ? result.startSha.slice(0, 8)
-          : null,
-    });
+    finishRun();
   } catch (e) {
     log(`[失敗] ${e.message}`);
     post({ type: 'error', text: e.message });
@@ -2710,7 +2736,7 @@ function wirePanel(webviewView) {
       const reply = (data) => {
         if (replied || !m || !m.id) return;
         replied = true;
-        send(m.type, data, m.id);
+        sendTo(webviewView, m.type, data, m.id);
       };
 
       const type = m && m.type;
@@ -2830,7 +2856,7 @@ const uriHandler = {
 
 let pendingCommand = null;
 
-function askPermissionFromPanel({ kind, detail, always }) {
+function askPermissionFromPanel({ kind, detail, always, whyKey }) {
   return new Promise((resolve) => {
 
     if (pendingCommand) pendingCommand.resolve('no');
@@ -2877,7 +2903,7 @@ function askPermissionFromPanel({ kind, detail, always }) {
       ),
 
       kind,
-      detail,
+      detail: whyKey ? `${detail}\n（${t(whyKey)}）` : detail,
       actions: [
         { label: t('action.runOnce'), action: 'askrun', answer: 'once' },
 
@@ -2892,7 +2918,9 @@ function askPermissionFromPanel({ kind, detail, always }) {
                       ? t('action.allowServer', { server: always })
                       : isBrowser
                         ? t('action.allowSite', { site: always })
-                        : t('action.allowProgram', { prog: always }),
+                        : Array.isArray(always)
+                          ? t('action.allowPrograms', { progs: always.join(', ') })
+                          : t('action.allowProgram', { prog: always }),
                 action: 'askrun',
                 answer: 'always',
               },
@@ -3477,9 +3505,11 @@ async function allowAlways({ kind, detail }) {
 async function allowAlwaysCommand(cmd) {
   const c = vscode.workspace.getConfiguration();
   const now = c.get('chatgptBridge.allowlist', []);
-  if (now.includes(cmd)) return;
-  await c.update('chatgptBridge.allowlist', now.concat([cmd]), vscode.ConfigurationTarget.Workspace);
-  post({ type: 'note', text: t('note.allowedAlways', { cmd }) });
+
+  const add = (Array.isArray(cmd) ? cmd : [cmd]).filter((x, i, a) => !now.includes(x) && a.indexOf(x) === i);
+  if (!add.length) return;
+  await c.update('chatgptBridge.allowlist', now.concat(add), vscode.ConfigurationTarget.Workspace);
+  post({ type: 'note', text: t('note.allowedAlways', { cmd: add.join(', ') }) });
 }
 
 function activate(context) {

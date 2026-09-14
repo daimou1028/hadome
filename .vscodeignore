@@ -5,6 +5,7 @@
 **/.DS_Store
 package-lock.json
 *.vsix
+*.zip
 
 node_modules/esbuild/**
 node_modules/@esbuild/**
@@ -17,3 +18,5 @@ node_modules/@vscode/codicons/src/**
 prior-art/**
 
 media/panel-*.png
+
+webview/dist/*.map
