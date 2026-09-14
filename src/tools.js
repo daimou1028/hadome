@@ -442,6 +442,8 @@ const RUNS_ANYTHING = new Set([
   'bash', 'sh', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
   'node', 'deno', 'bun', 'python', 'python3', 'ruby', 'perl', 'php', 'osascript',
   'env', 'nohup', 'xargs', 'nice', 'time', 'sudo', 'doas', 'ssh', 'eval',
+
+  'command',
 ]);
 
 function canRememberAlways(prog) {
@@ -484,6 +486,203 @@ function splitArgs(command) {
   if (quote) throw new ToolError(`引用符が閉じていません: ${command}`, 'tool.quote', { command });
   if (cur || has) argv.push(cur);
   return argv;
+}
+
+const CMD_UNSAFE = {
+  substitution: 'cmd.unsafe.substitution',
+  runsAnything: 'cmd.unsafe.runsAnything',
+  findExec: 'cmd.unsafe.findExec',
+  redirect: 'cmd.unsafe.redirect',
+  assignment: 'cmd.unsafe.assignment',
+  parse: 'cmd.unsafe.parse',
+};
+
+const KW_STAY = new Set(['if', 'while', 'until', 'then', 'else', 'elif', 'do', '!', '{']);
+
+const KW_SKIP = new Set(['for', 'select', 'case', 'fi', 'done', 'esac', 'in', 'function', '}']);
+
+const FIND_EXECS = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']);
+
+const REDIR = /^(>>|>|<)(&?)\s*([^\s;&|()<>]*)/;
+
+function redirTargetOk(target) {
+  if (!target) return false;
+  if (target === '/dev/null') return true;
+  if (target.startsWith('/') || target.startsWith('~')) return false;
+  if (target.split('/').includes('..')) return false;
+
+  if (/[$`]/.test(target)) return false;
+  return true;
+}
+
+function commandPrograms(command) {
+  const s = String(command || '');
+  const segments = [];
+  const progs = [];
+  let unsafe = null;
+  const fail = (key) => {
+    if (!unsafe) unsafe = key;
+  };
+
+  let quote = null;
+  let cur = '';
+  let curHas = false;
+
+  let segStart = 0;
+  let segProg = null;
+  let segArgs = [];
+  let atCmd = true;
+
+  const flushWord = (endIdx) => {
+    if (!cur && !curHas) return;
+    const w = cur;
+    cur = '';
+    curHas = false;
+    if (!atCmd) {
+      segArgs.push(w);
+      return;
+    }
+
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) {
+
+      fail(CMD_UNSAFE.assignment);
+      segStart = endIdx;
+      return;
+    }
+    if (KW_STAY.has(w)) {
+      segStart = endIdx;
+      return;
+    }
+    if (KW_SKIP.has(w)) {
+      segStart = endIdx;
+      atCmd = false;
+      return;
+    }
+    segProg = w;
+    atCmd = false;
+  };
+
+  const endSegment = (endIdx) => {
+    flushWord(endIdx);
+    if (segProg) {
+      const prog = expandHome(segProg);
+      const base = prog.split('/').pop();
+      if (/[$`]/.test(segProg)) fail(CMD_UNSAFE.parse);
+      if (RUNS_ANYTHING.has(base)) fail(CMD_UNSAFE.runsAnything);
+      if (base === 'find' && segArgs.some((a) => FIND_EXECS.has(a))) fail(CMD_UNSAFE.findExec);
+      segments.push(s.slice(segStart, endIdx).trim());
+      if (!progs.includes(prog)) progs.push(prog);
+    }
+    segProg = null;
+    segArgs = [];
+  };
+
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+
+    if (quote) {
+      if (c === quote) {
+        quote = null;
+        i += 1;
+        continue;
+      }
+      if (quote === '"') {
+        if (c === '`') {
+          fail(CMD_UNSAFE.substitution);
+          i += 1;
+          continue;
+        }
+        if (c === '$' && s[i + 1] === '(') {
+          fail(CMD_UNSAFE.substitution);
+          i += 2;
+          continue;
+        }
+        if (c === '\\' && i + 1 < s.length) {
+          cur += s[i + 1];
+          i += 2;
+          continue;
+        }
+      }
+      cur += c;
+      i += 1;
+      continue;
+    }
+
+    if (c === '\\') {
+      if (i + 1 >= s.length) {
+        fail(CMD_UNSAFE.parse);
+        break;
+      }
+      cur += s[i + 1];
+      curHas = true;
+      i += 2;
+      continue;
+    }
+
+    if (c === '"' || c === "'") {
+      quote = c;
+      curHas = true;
+      i += 1;
+      continue;
+    }
+
+    if (c === '`') {
+      fail(CMD_UNSAFE.substitution);
+      i += 1;
+      continue;
+    }
+    if (c === '$' && s[i + 1] === '(') {
+      fail(CMD_UNSAFE.substitution);
+      i += 2;
+      continue;
+    }
+
+    if (c === '>' || c === '<') {
+      flushWord(i);
+      const m = REDIR.exec(s.slice(i));
+      if (!m) {
+        fail(CMD_UNSAFE.parse);
+        i += 1;
+        continue;
+      }
+
+      if (!m[2] && !redirTargetOk(m[3])) fail(CMD_UNSAFE.redirect);
+      i += m[0].length;
+      continue;
+    }
+
+    if (c === '\n' || c === '\r' || c === ';' || c === '&' || c === '|') {
+      const two = s.slice(i, i + 2);
+      endSegment(i);
+      i += two === '&&' || two === '||' || two === ';;' ? 2 : 1;
+      segStart = i;
+      atCmd = true;
+      continue;
+    }
+
+    if (c === '(' || c === ')') {
+      endSegment(i);
+      i += 1;
+      segStart = i;
+      atCmd = c === '(';
+      continue;
+    }
+
+    if (/\s/.test(c)) {
+      flushWord(i);
+      i += 1;
+      continue;
+    }
+
+    cur += c;
+    i += 1;
+  }
+
+  if (quote) fail(CMD_UNSAFE.parse);
+  endSegment(s.length);
+
+  return { segments, progs, unsafe };
 }
 
 const checkpoint = require('./checkpoint');
@@ -1837,11 +2036,22 @@ function makeTools({
 
       const guardedPath = guardedPathInCommand(cmd);
 
-      if (denied || meta || guardedPath || !isAllowed(cmd, allowlist)) {
+      const parsed = meta ? commandPrograms(cmd) : null;
 
-        const prog = expandHome(splitArgs(cmd)[0] || cmd);
+      const metaOk =
+        !!parsed &&
+        !parsed.unsafe &&
+        parsed.segments.length > 0 &&
+        parsed.segments.every((s) => isAllowed(s, allowlist));
 
-        const rememberable = !denied && !meta && !guardedPath && canRememberAlways(prog);
+      if (denied || guardedPath || (meta ? !metaOk : !isAllowed(cmd, allowlist))) {
+
+        const remembers = meta
+          ? parsed.progs
+          : [expandHome(splitArgs(cmd)[0] || cmd)].filter(canRememberAlways);
+
+        const rememberable =
+          !denied && !guardedPath && !(parsed && parsed.unsafe) && remembers.length > 0;
         const answer = await askOrPass({
           kind: 'command',
           detail: denied
@@ -1849,11 +2059,15 @@ function makeTools({
             : guardedPath
               ? `${cmd}\n（触らせない場所を名指ししています: ${guardedPath}）`
               : cmd,
-          always: rememberable ? prog : null,
+          always: rememberable ? (meta ? remembers : remembers[0]) : null,
+
+          whyKey: !denied && !guardedPath && parsed ? parsed.unsafe : null,
         });
         if (answer === 'always' && rememberable) {
-          allowlist = allowlist.concat([prog]);
-          if (onAllowAlways) onAllowAlways({ kind: 'command', detail: prog });
+          allowlist = allowlist.concat(remembers.filter((p) => !allowlist.includes(p)));
+          if (onAllowAlways) {
+            onAllowAlways({ kind: 'command', detail: meta ? remembers : remembers[0] });
+          }
         } else if (denied) {
           throw new ToolError(
             `この引数は自動では通しません: ${cmd}\n` +
@@ -2396,6 +2610,8 @@ module.exports = {
   splitArgs,
   expandHome,
   canRememberAlways,
+  commandPrograms,
+  CMD_UNSAFE,
   SHELL_META,
   EXPANDS_IN_DQUOTE,
   isGitRepo,

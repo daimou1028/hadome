@@ -11,3 +11,5 @@ prior-art/
 
 .DS_Store
 .vscode/settings.json
+
+.claude/
