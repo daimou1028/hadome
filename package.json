@@ -713,6 +713,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node tools/build-webview.js",
+    "build:prod": "node tools/build-webview.js --production",
     "watch": "node tools/build-webview.js --watch",
     "prepare": "node tools/build-webview.js && node tools/install-git-hooks.js",
     "package": "node tools/package-extension.js",
