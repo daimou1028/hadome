@@ -23,6 +23,20 @@ function findVsix() {
     .map((name) => path.join(REPO, name));
 }
 
+function nextAvailablePath(basePath) {
+  if (!fs.existsSync(basePath)) return basePath;
+
+  const ext = path.extname(basePath);
+  const stem = basePath.slice(0, -ext.length);
+  let index = 1;
+  let candidate;
+  do {
+    candidate = `${stem}-${index}${ext}`;
+    index += 1;
+  } while (fs.existsSync(candidate));
+  return candidate;
+}
+
 const originalPackage = readJson(PACKAGE_JSON);
 const originalLock = fs.existsSync(PACKAGE_LOCK) ? readJson(PACKAGE_LOCK) : null;
 const originalVsix = findVsix();
@@ -38,6 +52,12 @@ try {
   writeJson(PACKAGE_JSON, buildPackage);
 
   execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:prod'], {
+    cwd: REPO,
+    stdio: 'inherit',
+  });
+
+  // 每次建立 VSIX 前，同步建立最新的 Chrome Extension ZIP。
+  execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'package:chrome'], {
     cwd: REPO,
     stdio: 'inherit',
   });
@@ -60,13 +80,8 @@ try {
   }
 
   const formalName = `${originalPackage.name}-${FORMAL_VERSION}.vsix`;
-  const formalPath = path.join(REPO, formalName);
+  const formalPath = nextAvailablePath(path.join(REPO, formalName));
   if (formalPath !== producedVsix) {
-    try {
-      fs.unlinkSync(formalPath);
-    } catch {
-      // 目標檔案不存在時不需處理。
-    }
     fs.renameSync(producedVsix, formalPath);
     producedVsix = formalPath;
   }

@@ -15,6 +15,8 @@ user-invocable: true
 - 不要自行修改 `package.json`、`package-lock.json` 或版本號來掩蓋打包問題。
 - 不要把四段 Git tag 直接寫入 VSIX 版本；Git tag、VSIX 版本與 Chrome 版本分開判定。
 - 每個產物都必須個別驗證；單一產物成功不代表整個任務完成。
+- 既有 VSIX 與 Chrome ZIP 產物一律保留，不得刪除或覆蓋。
+- 若目標檔名已存在，使用 `-1`、`-2`、`-3` 等遞增尾碼建立新檔；例如 `hadome-0.1.10.2.vsix` 已存在時，下一個應為 `hadome-0.1.10.2-1.vsix`。
 - 回報時必須分開列出「已確認」與「未完成或失敗」。
 
 ## 1. 版本與 Git 確認
@@ -115,7 +117,7 @@ ls -l <chrome-zip>
 
 若腳本輸出檔名不是預期名稱，先以實際腳本輸出與檔案系統結果為準，不要猜測檔名。
 
-## 4. 建立 VSIX
+## 4. 建立 VSIX 與同步 Chrome Extension
 
 使用專案既有打包腳本：
 
@@ -123,10 +125,22 @@ ls -l <chrome-zip>
 npm run package
 ```
 
+`npm run package` 會依序：
+
+1. 重新打包 Webview。
+2. 執行 `npm run package:chrome`，同步建立最新的 Chrome Extension ZIP。
+3. 建立 VSIX。
+
 目前專案的 `package` script 預期使用：
 
 ```json
 "package": "node tools/package-extension.js"
+```
+
+若只需要單獨建立 Chrome ZIP，仍可使用：
+
+```bash
+npm run package:chrome
 ```
 
 成功條件：

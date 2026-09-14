@@ -31,7 +31,23 @@ if (nowMinor !== wantMinor) {
 }
 
 const 名 = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).name;
-const out = path.join(REPO, `${名}-chrome-${manifest.version}.zip`);
+const baseOut = path.join(REPO, `${名}-chrome-${manifest.version}.zip`);
+
+function nextAvailablePath(basePath) {
+  if (!fs.existsSync(basePath)) return basePath;
+
+  const ext = path.extname(basePath);
+  const stem = basePath.slice(0, -ext.length);
+  let index = 1;
+  let candidate;
+  do {
+    candidate = `${stem}-${index}${ext}`;
+    index += 1;
+  } while (fs.existsSync(candidate));
+  return candidate;
+}
+
+const out = nextAvailablePath(baseOut);
 
 const 在る = fs
   .readdirSync(SRC)
