@@ -90,5 +90,6 @@
   "config.diagnosticsAfterEdit.description": "After an edit, report the problems that edit **added** (pre-existing ones are not reported).",
   "command.startBrowser.title": "Start the isolated browser",
   "config.browserPath.description": "Which browser the `browser_*` tools drive. Empty (the default) finds the browser you loaded the companion extension into, and falls back to the first Chromium-family browser installed. Set the full path to an executable to pin it.",
-  "config.browserProfile.description": "The profile directory that browser runs on. Empty (the default) uses a dedicated one under Application Support, kept separate from the browser you use every day — the tools refuse to touch anything else. Change this only if you know what you are handing over."
+  "config.browserProfile.description": "The profile directory that browser runs on. Empty (the default) uses a dedicated one under Application Support, kept separate from the browser you use every day — the tools refuse to touch anything else. Change this only if you know what you are handing over.",
+  "config.thinking.description": "Turn on ChatGPT thinking before sending. The toggle only appears when the open tab actually has that control and it responds — chatgpt.com has changed it three times since 2026-08, so this is detected, not assumed."
 }

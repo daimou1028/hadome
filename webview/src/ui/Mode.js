@@ -2,7 +2,7 @@ const { useState, useEffect, useRef } = require('react');
 
 const { ORDER, nextMode, MARK } = require('./modeCycle');
 
-function Mode({ mode, label, labels, notes, hint, onPick }) {
+function Mode({ mode, label, labels, notes, hint, onPick, thinking, thinkingLabel, thinkingNote, onThinking }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
 
@@ -43,6 +43,23 @@ function Mode({ mode, label, labels, notes, hint, onPick }) {
               </span>
             </button>
           ))}
+          {typeof thinking === 'boolean' ? (
+            <button
+              className={'modeitem thinkitem' + (thinking ? ' now' : '')}
+
+              aria-pressed={thinking}
+              onClick={() => onThinking(!thinking)}
+            >
+              <span
+                className={'mark codicon codicon-' + (thinking ? 'check' : 'blank')}
+                aria-hidden="true"
+              />
+              <span className="col">
+                <span className="nm">{thinkingLabel}</span>
+                {thinkingNote ? <span className="note">{thinkingNote}</span> : null}
+              </span>
+            </button>
+          ) : null}
         </div>
       ) : null}
 

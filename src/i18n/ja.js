@@ -577,6 +577,8 @@ module.exports = {
   'tool.quote': '引用符が閉じていません: {command}',
   'tool.noWrite': '書き換えを許しませんでした: {rel}',
   'tool.blocked': '{why}: {rel}',
+  'mode.thinking': '思考',
+  'mode.thinking.d': '送る前に ChatGPT の「思考」を入にします。遅くなりますが、より考えます。',
   'mode.ask': '権限を手動で確認',
   'mode.edit': 'ファイル編集を自動承認',
   'mode.plan': 'プランモード',

@@ -51,6 +51,7 @@
 
         --role-border: var(--vscode-panel-border);
         --role-quote-bg: var(--vscode-textBlockQuote-background);
+        --role-quote-border: var(--vscode-textBlockQuote-border, var(--role-border));
         --role-code-bg: var(--vscode-textCodeBlock-background);
         --role-focus: var(--vscode-focusBorder);
         --role-link: var(--vscode-textLink-foreground);
@@ -176,6 +177,32 @@
       .body p { margin: 0 0 0.7em; }
       .body p:last-child { margin-bottom: 0; }
       .body ul { margin: 0 0 0.7em; padding-left: 1.3em; }
+
+      .body ol { margin: 0 0 0.7em; padding-left: 1.3em; }
+      .body table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+        margin: 0.5em 0 0.7em;
+        border-collapse: collapse;
+      }
+      .body th,
+      .body td {
+        border: 1px solid var(--role-border);
+        padding: var(--sp-2) var(--sp-3);
+        text-align: left;
+        vertical-align: top;
+
+        word-break: normal;
+      }
+      .body blockquote {
+        margin: 0.5em 0;
+        padding: var(--sp-3) var(--sp-4);
+        background: var(--role-quote-bg);
+        border-left: 2px solid var(--role-quote-border);
+        border-radius: 0 var(--radius) var(--radius) 0;
+      }
+      .body hr { border: none; border-top: 1px solid var(--role-border); margin: 0.9em 0; }
       .body h3 { font-size: var(--text-md); margin: 0.9em 0 0.4em; }
       .body code {
         font-family: var(--vscode-editor-font-family);
@@ -1259,6 +1286,28 @@
       let workspaceRoot = '';
 
       let mode = 'edit';
+
+      let thinking = null;
+
+      let thinkingWant = false;
+
+      function setThinking(next) {
+        thinking = next;
+        thinkingWant = next;
+        drawBar();
+        ask('thinking', { on: next })
+          .then((r) => {
+            if (!r || typeof r.on !== 'boolean') return;
+            thinkingWant = r.on;
+
+            if (typeof thinking === 'boolean' && r.on !== thinking) {
+              thinking = r.on;
+              drawBar();
+            }
+          })
+          .catch(() => {});
+      }
+
       function cycleMode() {
         setMode(Bridge.nextMode(mode));
       }
@@ -1585,6 +1634,11 @@
             notes: Object.fromEntries(Bridge.modeOrder.map((m) => [m, t('mode.' + m + '.d')])),
             hint: t('mode.hint', { how: 'Shift+Tab' }),
             onPick: setMode,
+
+            thinking,
+            thinkingLabel: t('mode.thinking'),
+            thinkingNote: t('mode.thinking.d'),
+            onThinking: setThinking,
           },
 
           addContext: {
@@ -2286,6 +2340,13 @@
             (before + sep + m.text).length
           );
           input.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (m.type === 'thinking') {
+
+          const next = typeof m.on === 'boolean' ? thinkingWant : null;
+          if (next !== thinking) {
+            thinking = next;
+            drawBar();
+          }
         } else if (m.type === 'note') {
 
           place(Bridge.renderNode(Bridge.node(Bridge.ui.Note, { text: m.text }), 'note'));
@@ -2415,6 +2476,18 @@
           if (r && r.mode) {
             mode = r.mode;
             drawBar();
+          }
+        })
+        .catch(() => {});
+
+      ask('thinking', {})
+        .then((r) => {
+          if (r && typeof r.on === 'boolean') {
+            thinkingWant = r.on;
+            if (typeof thinking === 'boolean' && thinking !== r.on) {
+              thinking = r.on;
+              drawBar();
+            }
           }
         })
         .catch(() => {});

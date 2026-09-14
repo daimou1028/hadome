@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -406,6 +406,11 @@
           ],
           "default": "needsYou",
           "markdownDescription": "パネルが見えていない時に、エディターの知らせを出すかどうか。参考実装（Claude Code）も「待たせている時」と「終わった時」の 2 つの時機を持ちます。**パネルが見えている時は出しません**（目の前に在る物を知らせるのは雑音）。"
+        },
+        "chatgptBridge.thinking": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.thinking.description%"
         },
         "chatgptBridge.mode": {
           "type": "string",

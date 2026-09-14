@@ -569,6 +569,8 @@ module.exports = {
   'tool.quote': '引號沒有關上：{command}',
   'tool.noWrite': '這次的修改沒有被核准：{rel}',
   'tool.blocked': '{why}：{rel}',
+  'mode.thinking': '思考',
+  'mode.thinking.d': '送出前先把 ChatGPT 的「思考」打開。會慢一點，但想得比較多。',
   'mode.ask': '手動確認權限',
   'mode.edit': '自動同意編輯檔案',
   'mode.plan': '規劃模式',

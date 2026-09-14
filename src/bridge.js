@@ -18,7 +18,7 @@ const RECONNECT_WAIT_MS = 30000;
 
 const RELOAD_WAIT_MS = 15000;
 
-const EXPECTED_TAB_PROTOCOL = 59;
+const EXPECTED_TAB_PROTOCOL = 60;
 
 const portlock = require('./portlock');
 
@@ -121,6 +121,8 @@ function openBridge({
   onLog = () => {},
   onConversationChange = () => {},
 
+  onThinkingState = () => {},
+
   t: tIn = null,
 
   workspace = '',
@@ -219,6 +221,18 @@ function openBridge({
           }
 
           if (m.type === 'hello') {
+
+            if (m.thinking && typeof m.thinking === 'object') {
+              try {
+                onThinkingState({
+                  present: !!m.thinking.present,
+                  usable: !!m.thinking.usable,
+                  on: !!m.thinking.on,
+                });
+              } catch {
+
+              }
+            }
             const id = typeof m.tabId === 'string' && m.tabId ? m.tabId : null;
 
             const who = id || '(名札なし)';
@@ -358,6 +372,18 @@ function openBridge({
             onLog(`[bridge:${port}] 場所が変わりました: ${lastUrl}（吹き出し ${lastTurns}）`);
 
             if (afterId !== beforeId) onConversationChange(afterId, lastUrl, lastTitle, beforeId);
+
+            if (m.thinking && typeof m.thinking === 'object') {
+              try {
+                onThinkingState({
+                  present: !!m.thinking.present,
+                  usable: !!m.thinking.usable,
+                  on: !!m.thinking.on,
+                });
+              } catch {
+
+              }
+            }
             return;
           }
 
@@ -723,6 +749,8 @@ function openBridge({
 
         asFile = false,
 
+        thinking = undefined,
+
         body = '',
       } = {}
     ) {
@@ -857,6 +885,8 @@ function openBridge({
             asFile: !!asFile,
 
             ...(asFile && body ? { body: String(body) } : {}),
+
+            ...(typeof thinking === 'boolean' ? { thinking } : {}),
           })
         );
       });

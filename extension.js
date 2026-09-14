@@ -272,6 +272,8 @@ function settings() {
 
     mode: c.get('mode', 'ask'),
 
+    thinking: c.get('thinking', false),
+
     outputStyle: c.get('outputStyle', ''),
     requireModifierToSend: c.get('requireModifierToSend', true),
   };
@@ -364,6 +366,13 @@ async function ensureBridge(s, port) {
 
       onConversationChange: (id, url, title, fromId) =>
         handleConversationChange(s, id, url, fromId),
+
+      onThinkingState: (st) => {
+        post({
+          type: 'thinking',
+          on: st && st.present && st.usable ? !!st.on : null,
+        });
+      },
     });
 
     await s.bridge.waitForTab();
@@ -762,6 +771,8 @@ async function handleRun(task) {
       mcp: mcpGot,
 
       mode: settings().mode,
+
+      thinking: settings().thinking,
 
       restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
 
@@ -2512,6 +2523,14 @@ const fromWebview = {
       .getConfiguration('chatgptBridge')
       .update('mode', want, vscode.ConfigurationTarget.Global);
     return { mode: want };
+  },
+
+  async thinking({ on } = {}) {
+    if (typeof on !== 'boolean') return { on: settings().thinking };
+    await vscode.workspace
+      .getConfiguration('chatgptBridge')
+      .update('thinking', on, vscode.ConfigurationTarget.Global);
+    return { on };
   },
 
   async choice({ answer }) {

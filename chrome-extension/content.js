@@ -69,7 +69,7 @@
     return tryPort;
   }
 
-  const TAB_PROTOCOL = 59;
+  const TAB_PROTOCOL = 60;
 
   const STILL_WRITING_WAIT_MS = 300000;
 
@@ -174,6 +174,8 @@
         tabId: TAB_ID,
 
         turns: (() => { try { return document.querySelectorAll('[data-message-author-role]').length; } catch { return -1; } })(),
+
+        thinking: thinkingState(),
 
         brands: (() => {
           try {
@@ -870,7 +872,12 @@
       }
       if (msg.type !== 'send') return;
       try {
-        const up = await submitPrompt(msg.text, msg.files || [], { asFile: !!msg.asFile, body: typeof msg.body === 'string' ? msg.body : '' });
+        const up = await submitPrompt(msg.text, msg.files || [], {
+          asFile: !!msg.asFile,
+          body: typeof msg.body === 'string' ? msg.body : '',
+
+          thinking: typeof msg.thinking === 'boolean' ? msg.thinking : undefined,
+        });
         send({ type: 'submitted', id: msg.id, upload: up });
 
         aliveBeat(msg.id);
@@ -1302,10 +1309,58 @@
     );
   }
 
+  function thinkingPill() {
+    try {
+      const all = [...document.querySelectorAll('button.__composer-pill[aria-pressed]')];
+      return all.length === 1 ? all[0] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  let thinkingInertNoted = false;
+
+  function thinkingState() {
+    const b = thinkingPill();
+    if (!b) return { present: false, usable: false, on: false };
+    const usable =
+      b.getAttribute('aria-pressed') !== null && !b.disabled && !thinkingInertNoted;
+    return { present: true, usable, on: b.getAttribute('aria-pressed') === 'true' };
+  }
+
+  async function setThinking(want) {
+    const b = thinkingPill();
+    if (!b) return null;
+    const read = () => b.getAttribute('aria-pressed') === 'true';
+    if (read() === want) return want;
+    b.click();
+    for (let i = 0; i < 20; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (read() === want) return want;
+    }
+
+    thinkingInertNoted = true;
+    return read();
+  }
+
+  let thinkingButtonMissingNoted = false;
+
   async function submitPrompt(text, files, opts) {
 
     const box = await waitFor('入力欄', findComposer, 20000);
     box.focus();
+
+    if (opts && typeof opts.thinking === 'boolean') {
+      const got = await setThinking(opts.thinking);
+      if (got === null) {
+        if (!thinkingButtonMissingNoted) {
+          thinkingButtonMissingNoted = true;
+          send({ type: 'note', text: '「思考」の札が見つからないので、そのまま送ります' });
+        }
+      } else if (got !== opts.thinking) {
+        send({ type: 'note', text: `「思考」を ${opts.thinking ? '入' : '切'} にできませんでした` });
+      }
+    }
 
     if (opts && opts.asFile) {
       const before = chipLabels().length;
@@ -1427,6 +1482,7 @@
   let lastSeenUrl = location.href;
 
   let lastSeenTurns = -1;
+  let lastSeenThinking = '';
   const 吹き出しの数 = () => {
     try {
       return document.querySelectorAll('[data-message-author-role]').length;
@@ -1438,10 +1494,20 @@
     const turns = 吹き出しの数();
     const 動いた = location.href !== lastSeenUrl;
     const 増えた = turns >= 0 && turns !== lastSeenTurns;
-    if (!動いた && !増えた) return;
+
+    const thinking = thinkingState();
+    const 思考の印 = `${thinking.present}/${thinking.usable}/${thinking.on}`;
+    const 思考が動いた = 思考の印 !== lastSeenThinking;
+    if (!動いた && !増えた && !思考が動いた) return;
+    if (動いた) {
+
+      thinkingButtonMissingNoted = false;
+      thinkingInertNoted = false;
+    }
     lastSeenUrl = location.href;
     lastSeenTurns = turns;
-    send({ type: 'url', url: lastSeenUrl, title: document.title, turns });
+    lastSeenThinking = 思考の印;
+    send({ type: 'url', url: lastSeenUrl, title: document.title, turns, thinking });
   }, 800);
 
   window.addEventListener('message', (ev) => {

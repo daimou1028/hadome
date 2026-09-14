@@ -163,6 +163,7 @@ Settings live under `chatgptBridge.*`.
 
 | Setting | Default | |
 |---|---|---|
+| `thinking` | `false` | Turn on ChatGPT thinking before sending. **The toggle only appears when the open tab actually has that control and it responds** |
 | `mode` | `ask` | How much it asks before acting: `ask` / `edit` / `plan` / `never` |
 | `modes` | `[]` | Extra modes of your own |
 | `port` | `8765` | The local WebSocket port the two halves meet on |

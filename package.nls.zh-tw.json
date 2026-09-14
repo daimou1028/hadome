@@ -90,5 +90,6 @@
   "config.diagnosticsAfterEdit.description": "編輯後立刻回報這次編輯**新增**的錯誤與警告（原本就有的不會列出）。",
   "command.startBrowser.title": "啟動隔離的瀏覽器",
   "config.browserPath.description": "`browser_*` 要操作哪個瀏覽器。留空（預設）會去找你載入配套擴充功能的那個瀏覽器，找不到就用已安裝的第一個。填執行檔路徑可以指定。",
-  "config.browserProfile.description": "那個瀏覽器使用的設定檔目錄。留空（預設）會用 Application Support 底下的專用目錄，和你平常用的瀏覽器分開——工具不會碰其他的。清楚知道自己交出了什麼再改。"
+  "config.browserProfile.description": "那個瀏覽器使用的設定檔目錄。留空（預設）會用 Application Support 底下的專用目錄，和你平常用的瀏覽器分開——工具不會碰其他的。清楚知道自己交出了什麼再改。",
+  "config.thinking.description": "送出前先把 ChatGPT 的「思考」打開。**這個開關只有在目前的分頁上真的有那顆按鈕、而且按得動的時候才會出現**（chatgpt.com 從 2026-08 以來變過三次，所以這邊不寫死）。"
 }

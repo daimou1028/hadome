@@ -156,6 +156,7 @@ npm run package:chrome   # → hadome-chrome-<版>.zip
 
 | 設定 | 既定 | |
 |---|---|---|
+| `thinking` | `false` | 送る前に ChatGPT の「思考」を入にする。**タブにその札が在って押せる時だけ画面に出ます** |
 | `mode` | `ask` | どこまで聞くか。`ask` / `edit` / `plan` / `never` |
 | `modes` | `[]` | 自分で足すモード |
 | `port` | `8765` | 両側がつながる手元の WebSocket の口 |

@@ -90,5 +90,6 @@
   "config.diagnosticsAfterEdit.description": "直した直後に、その直しで**増えた**誤り・注意をその場で伝えます（元から在った物は出しません）。",
   "command.startBrowser.title": "隔離したブラウザーを起こす",
   "config.browserPath.description": "`browser_*` がどのブラウザーを動かすか。空（既定）なら、相方の拡張機能を入れたブラウザーを探し、見つからなければ入っている物の先頭を使います。実行檔の道を書けば名指しできます。",
-  "config.browserProfile.description": "そのブラウザーが使う設定ファイル。空（既定）なら Application Support の下の専用の物を使い、ふだん使いのブラウザーとは分けます——ツールはそれ以外には触りません。何を渡す事になるか分かっている時だけ替えてください。"
+  "config.browserProfile.description": "そのブラウザーが使う設定ファイル。空（既定）なら Application Support の下の専用の物を使い、ふだん使いのブラウザーとは分けます——ツールはそれ以外には触りません。何を渡す事になるか分かっている時だけ替えてください。",
+  "config.thinking.description": "送る前に ChatGPT の「思考」を入にします。**この切り替えは、いま開いているタブに その札が在って押せる時だけ画面に出ます**（chatgpt.com は 2026-08 以降 3 度 変わっているので、こちらでは決め打ちしません）。"
 }

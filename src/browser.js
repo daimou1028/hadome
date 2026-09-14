@@ -154,7 +154,7 @@ async function 起こす(port = PORT) {
     );
   }
   try {
-    require('child_process')
+    const 子 = require('child_process')
       .spawn(
         実行檔,
         [
@@ -167,8 +167,28 @@ async function 起こす(port = PORT) {
           'about:blank',
         ],
         { detached: true, stdio: 'ignore' }
-      )
-      .unref();
+      );
+
+    try {
+      const 台帳 = require('../tools/lib/run-ledger');
+      const 呼び手 = String(new Error().stack || '')
+        .split('\n')
+        .slice(2, 6)
+        .map((x) => x.trim())
+        .join(' ← ')
+        .slice(0, 300);
+      const r = 台帳.起こした('browser', 子.pid, `${実行檔} --remote-debugging-port=${port}`, {
+        設定ファイル: 隔離した設定ファイルの道(),
+        枠: port,
+        起こした所: 'src/browser.js',
+        呼び手,
+      });
+      if (!r.書けた) console.error(`[bridge] 台帳へ書けませんでした（${r.なぜ}）。この browser は所有者不明に成ります`);
+    } catch (e) {
+      console.error(`[bridge] 台帳を開けませんでした（${e.message}）。この browser は所有者不明に成ります`);
+    }
+
+    子.unref();
   } catch (e) {
     throw new Error(`隔離したブラウザーを起こせませんでした: ${e.message}`);
   }

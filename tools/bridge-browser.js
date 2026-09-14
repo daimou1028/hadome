@@ -110,6 +110,15 @@ function launch() {
     ],
     { detached: true, stdio: 'ignore' }
   );
+
+  {
+    const 台帳 = require('./lib/run-ledger');
+    const r = 台帳.起こした('browser', child.pid, `${CANARY} --user-data-dir=${PROFILE} --remote-debugging-port=${CDP_PORT}`, {
+      設定ファイル: PROFILE,
+      枠: CDP_PORT,
+    });
+    if (!r.書けた) console.error(`  ★ 台帳へ書けませんでした（${r.なぜ}）。この browser は所有者不明に成ります`);
+  }
   child.unref();
 }
 

@@ -573,6 +573,8 @@ module.exports = {
   'tool.quote': 'Unclosed quote: {command}',
   'tool.noWrite': 'You turned the edit down: {rel}',
   'tool.blocked': '{why}: {rel}',
+  'mode.thinking': 'Thinking',
+  'mode.thinking.d': "Turn on ChatGPT's thinking before sending. Slower, but it reasons more.",
   'mode.ask': 'Confirm permissions manually',
   'mode.edit': 'Auto-approve file edits',
   'mode.plan': 'Plan mode',

@@ -5,11 +5,12 @@ if [ -n "$SKIP_CHECK" ]; then
   exit 0
 fi
 cd "$(git rev-parse --show-toplevel)"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_TEMPLATE_DIR
 if ! node -e 'process.exit(require("./package.json").scripts["check:fast"] ? 0 : 1)' 2>/dev/null; then
   exit 0
 fi
 echo "[pre-commit] npm run check:fast（19 秒ほど）" >&2
-OUT=$(npm run check:fast 2>&1); RC=$?
+if OUT=$(npm run check:fast 2>&1); then RC=0; else RC=$?; fi
 if [ "$RC" -ne 0 ]; then
   echo "$OUT" | tail -30 >&2
   echo "[pre-commit] 自己検査が落ちました（RC=$RC）。直してから commit してください。どうしても通すなら SKIP_CHECK=1" >&2

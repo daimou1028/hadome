@@ -147,6 +147,7 @@ npm run package:chrome   # → hadome-chrome-<版本>.zip
 
 | 設定 | 預設 | |
 |---|---|---|
+| `thinking` | `false` | 送出前先打開 ChatGPT 的「思考」。**只有分頁上真的有那顆按鈕、而且按得動時才會出現在畫面上** |
 | `mode` | `ask` | 動作前問到什麼程度：`ask` / `edit` / `plan` / `never` |
 | `modes` | `[]` | 自己加的模式 |
 | `port` | `8765` | 兩邊相接的本機 WebSocket 連接埠 |
