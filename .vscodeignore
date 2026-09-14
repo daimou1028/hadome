@@ -5,6 +5,7 @@
 **/.DS_Store
 package-lock.json
 *.vsix
+*.zip
 
 node_modules/esbuild/**
 node_modules/@esbuild/**
