@@ -286,7 +286,8 @@ function readIgnoreRules(root) {
     .map(globToRegExp);
 }
 
-function whyBlocked(root, rel, { protectSecrets = true } = {}) {
+function whyBlocked(root, rel, { protectSecrets = true, unrestricted = false } = {}) {
+  if (unrestricted) return null;
   const p = String(rel).replace(/\\/g, '/');
 
   if (isDangerousPath(p)) {
@@ -834,8 +835,11 @@ function makeTools({
   const 生きている許可 = () =>
     isRevoked ? allowlist.filter((a) => !取り消された('command', a)) : allowlist;
 
+  // 加強版は「隔離した作業場だけ」の縛りを外す。触らせない場所の門も開く。
+  const 無制限 = mode === 'neverPlus';
+
   const askOrPass = async (q) => {
-    if (mode === 'never') return 'once';
+    if (mode === 'never' || 無制限) return 'once';
     return askPermission ? askPermission(q) : 'no';
   };
 
@@ -892,7 +896,7 @@ function makeTools({
   }
 
   const guard = (rel) => {
-    const why = whyBlocked(root, rel, { protectSecrets });
+    const why = whyBlocked(root, rel, { protectSecrets, unrestricted: 無制限 });
     if (why) throw new ToolError(`${why}: ${rel}`, 'tool.blocked', { why, rel });
   };
 
@@ -1452,7 +1456,7 @@ function makeTools({
 
           const fromRoot = path.relative(root, full);
           if (探してよい && !探してよい.has(fromRoot)) continue;
-          if (whyBlocked(root, fromRoot, { protectSecrets })) continue;
+          if (whyBlocked(root, fromRoot, { protectSecrets, unrestricted: 無制限 })) continue;
           let mtime = 0;
           try {
             mtime = fs.statSync(full).mtimeMs;
@@ -2132,7 +2136,7 @@ function makeTools({
           const rel = path.relative(root, full);
 
           if (探してよい && !探してよい.has(rel)) continue;
-          if (whyBlocked(root, rel, { protectSecrets })) continue;
+          if (whyBlocked(root, rel, { protectSecrets, unrestricted: 無制限 })) continue;
           body.split('\n').forEach((line, i) => {
             if (!全部歩く && hits.length >= cap) return;
             re.lastIndex = 0;
