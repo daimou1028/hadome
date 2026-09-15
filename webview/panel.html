@@ -41,6 +41,9 @@
         --role-mode-plan: var(--vscode-foreground, #bfbfbf);
         --role-mode-edit: var(--vscode-foreground, #bfbfbf);
         --role-mode-never: var(--vscode-errorForeground, #ff827d);
+        --role-mode-neverPlus: var(--vscode-errorForeground, #ff827d);
+
+        --role-mode-focus-danger: #8b1a1a;
         --role-sub-1: var(--vscode-charts-blue, #3794ff);
         --role-sub-2: var(--vscode-charts-purple, #b180d7);
         --role-sub-3: var(--vscode-charts-orange, #d18616);
@@ -704,6 +707,12 @@
         background: var(--role-hover);
         color: var(--role-primary-fg);
       }
+
+      /* 既定の青い焦点の枠を、この選び札だけ暗い赤へ。背景の高まりは触らない。 */
+      .modeitem:focus-visible {
+        outline: 2px solid var(--role-mode-focus-danger);
+        outline-offset: -1px;
+      }
       .modeitem:hover .mark,
       .modeitem:focus-visible .mark { color: var(--role-primary-fg); }
       .modeitem:hover .note,
@@ -898,6 +907,7 @@
       #mode.mode-plan { color: var(--role-mode-plan); }
       #mode.mode-edit { color: var(--role-mode-edit); }
       #mode.mode-never { color: var(--role-mode-never); }
+      #mode.mode-neverPlus { color: var(--role-mode-neverPlus); }
 
       .mode,
       #enterkey,

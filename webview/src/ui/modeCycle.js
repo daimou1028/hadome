@@ -1,4 +1,4 @@
-const ORDER = ['ask', 'edit', 'plan', 'never'];
+const ORDER = ['ask', 'edit', 'plan', 'never', 'neverPlus'];
 
 function nextMode(now) {
   const at = ORDER.indexOf(now);
@@ -15,6 +15,8 @@ const MARK = {
   edit: 'code',
 
   never: 'zap',
+
+  neverPlus: 'flame',
 };
 
 module.exports = { ORDER, nextMode, MARK };

@@ -217,8 +217,18 @@ function post(msg) {
   send(type, data);
 }
 
+// 「略過」と「略過（加強版）」は聞かない。加強版は更に触らせない場所の門も開く。
+function skipsAsking() {
+  const m = settings().mode;
+  return m === 'never' || m === 'neverPlus';
+}
+
+function unrestricted() {
+  return settings().mode === 'neverPlus';
+}
+
 function neverModeStop(reason) {
-  if (settings().mode !== 'never') return null;
+  if (!skipsAsking()) return null;
   post({ type: 'note', text: t('never.autostop', { why: t(reason) }) });
   return '';
 }
@@ -1832,7 +1842,7 @@ function askSilentStreak(times, why, calledEver) {
 let pendingDowngrade = null;
 function askDowngrade(info) {
   const when = info.hhmm ? t('downgrade.until', { hhmm: info.hhmm }) : t('downgrade.unknownUntil');
-  if (settings().mode === 'never') {
+  if (skipsAsking()) {
     const policy = info.until ? 'wait' : 'continue';
     post({ type: 'note', text: t('downgrade.auto.' + policy, { model: info.to || '?', when }) });
     return Promise.resolve(policy);
@@ -2380,7 +2390,7 @@ const fromWebview = {
       for (const uri of found) {
         const rel = path.relative(root, uri.fsPath).split(path.sep).join('/');
         if (!rel || rel.startsWith('..')) continue;
-        if (whyBlocked(root, rel, { protectSecrets })) continue;
+        if (whyBlocked(root, rel, { protectSecrets, unrestricted: unrestricted() })) continue;
         items.push(rel);
 
         for (let cut = rel.lastIndexOf('/'); cut > 0; ) {
@@ -2444,7 +2454,13 @@ const fromWebview = {
     const nm = String(rel || '').trim();
     if (!nm) return { ok: false };
 
-    if (whyBlocked(s2.root, nm, { protectSecrets: settings().protectSecrets })) return { ok: false };
+    if (
+      whyBlocked(s2.root, nm, {
+        protectSecrets: settings().protectSecrets,
+        unrestricted: unrestricted(),
+      })
+    )
+      return { ok: false };
     const full = path.join(s2.root, nm);
     try {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(full));
