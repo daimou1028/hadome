@@ -2,7 +2,7 @@
   "name": "hadome",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "publisher": "local",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -299,20 +299,26 @@
         },
         "chatgptBridge.subAgents": {
           "type": "number",
-          "default": 2,
+          "default": 0,
           "minimum": 0,
           "maximum": 4,
           "description": "%config.subAgents.description%"
+        },
+        "chatgptBridge.maxSendsPerHour": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 120,
+          "description": "%config.maxSendsPerHour.description%"
         },
         "chatgptBridge.subAgentCleanup": {
           "type": "string",
           "enum": [
             "none",
             "archive-success",
-            "archive-all",
-            "delete-success"
+            "archive-all"
           ],
-          "default": "archive-success",
+          "default": "none",
           "description": "%config.subAgentCleanup.description%"
         },
         "chatgptBridge.restartGapSeconds": {

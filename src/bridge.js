@@ -1,9 +1,10 @@
 const { WebSocketServer } = require('ws');
 
+const creategate = require('./creategate');
+
 const DEFAULT_PORT = 8765;
 
 const CONNECT_TIMEOUT_MS = 30000;
-const ANSWER_TIMEOUT_MS = 300000;
 
 const TAB_FROZEN_MS = 20000;
 
@@ -20,11 +21,19 @@ const ENTRY_RENDER_WAIT_MS = 15000;
 
 const RELOAD_WAIT_MS = 15000;
 
-const EXPECTED_TAB_PROTOCOL = 60;
+const EXPECTED_TAB_PROTOCOL = 62;
+
+const WANT_TAB_REPEAT_MS = 30000;
 
 const portlock = require('./portlock');
 
 const { noteStreamCut, fileOf: streamCutsFileOf } = require('./streamcuts');
+const { pathHits } = require('./tabpick');
+const { projectIdOf } = require('./conversation');
+const { createLiveness, noteLiveness, shouldStall } = require('./liveness');
+
+const PROJECT_SETTLE_MS = 2500;
+const PROJECT_PROBE_MS = 3000;
 
 const CLAIM_POLL_MS = 1000;
 
@@ -73,7 +82,6 @@ const JA_FALLBACK = {
   'br.streamCut': ({ why, status, ms, events, chars, file }) =>
     `[bridge] 流れが最後まで来ないまま閉じました（${why}／番号 ${status}／${ms}ms／` +
     `出来事 ${events} 件／本文 ${chars} 文字）。証拠を ${file} に残しました`,
-  'br.timeout': () => "返答が時間切れになりました",
   'br.timeoutNoStream': ({ sec }) =>
     `送ってから ${sec} 秒 待ちましたが、相手からの流れが 1 度も開きませんでした。` +
     '**相手が受け取っていないか、受け取ったまま何も始めていません。**\n' +
@@ -100,6 +108,8 @@ const JA_FALLBACK = {
   'br.projectEntryDead': ({ where }) =>
     `専案の入口が描けず（${where}）、落とせる既存の対話も見つかりませんでした。` +
     'ChatGPT を開いて専案の画面が出るかを見てください。出ないなら相手の側の不具合です。',
+  'br.projectGone': ({ where }) =>
+    `専案へ入れませんでした（着いた所: ${where}）。専案が消された見込みです。専案の外では送りません。`,
   'br.stopped': () => "利用者が中断しました",
   'br.noSock': () => "対象タブが繋がっていません",
   'br.openNoReply': () => "タブを開けたかどうかの返事がありません",
@@ -107,6 +117,8 @@ const JA_FALLBACK = {
   'br.noReload': () => "タブが読み込み直されませんでした。ブラウザの chrome://extensions で拡張機能を読み込み直し、chatgpt.com のタブも読み込み直してください。",
   'br.noMove': () => "タブが移りませんでした。ブラウザの拡張機能とタブを読み込み直してください。",
   'br.cantEnter': ({ where }) => `その対話へ入れませんでした（着いた先: ${where}）。ChatGPT 側で消されているか、別の場所へ移された可能性があります。`,
+  'br.badLifecycle': ({ reason, actor }) =>
+    `新しい対話を作る理由が不正です（reason=${reason}, actor=${actor}）。`,
   'br.unknownWhere': () => "不明",
   'br.noProjectHome': () =>
     '専案の道がまだ分かっていません。専案の外で始めると、その決まりが 1 つも効きません。少し待つか、対話の画面を開き直してください。',
@@ -116,6 +128,7 @@ const JA_FALLBACK = {
   'br.heldBy': ({ name, pid }) => `握っているのは ${name}（PID ${pid}）です。`,
   'br.heldWhere': ({ where }) => `その窓が開いている場所: ${where}`,
   'br.howToFind': ({ port }) => `調べる時: lsof -ti:${port} -sTCP:LISTEN`,
+  'br.pickedTabLate': () => '選んだタブがまだ繋がっていません。タブを前面に出してから、もう 1 度 送ってください',
 };
 
 const HEALTH_INTERVAL_MS = 30000;
@@ -126,6 +139,10 @@ const HEAP_WARN_MB = 1500;
 
 function openBridge({
   port = DEFAULT_PORT,
+
+  onRoster = () => {},
+
+  editorId = '',
   onLog = () => {},
   onConversationChange = () => {},
   onTabHealth = () => {},
@@ -135,6 +152,8 @@ function openBridge({
   t: tIn = null,
 
   workspace = '',
+
+  createGapMs = 0,
 } = {}) {
   const t = (k, v) => (tIn ? tIn(k, v) : JA_FALLBACK[k](v || {}));
   return new Promise((resolve, reject) => {
@@ -157,10 +176,63 @@ function openBridge({
     let seq = 0;
     let generation = 0;
     let lastUrl = '';
+    const createdConversationIds = new Set();
+    let awaitingCreatedConversationId = false;
 
     let lastTurns = -1;
     let lastTitle = '';
     let tabProtocol = 0;
+
+    let lastPluginId = '';
+    let lastChromeTabId = null;
+
+    const rosters = new Map();
+
+    const claimWaiters = new Map();
+
+    let wanted = null;
+
+    let lastWantTab = { key: '', at: 0 };
+    let switchArmed = false;
+    let switchWaitLogged = false;
+    let switchCandidate = null;
+
+    function matchesWanted(tab) {
+      if (!wanted || !tab) return false;
+      if (wanted.pluginId && String(tab.pluginId || '') !== wanted.pluginId) return false;
+      const href = String(tab.url || '');
+      if (Number.isInteger(wanted.chromeTabId) && Number.isInteger(tab.chromeTabId)) {
+
+        if (!wanted.pluginId && (!wanted.url || wanted.url === '/')) return false;
+        return wanted.chromeTabId === tab.chromeTabId && (!wanted.url || wanted.url === '/' || pathHits(href, wanted.url));
+      }
+      return !!wanted.url && pathHits(href, wanted.url);
+    }
+
+    function armTabSwitch(v) {
+      wanted =
+        v && v.url
+          ? { pluginId: String(v.pluginId || ''), url: String(v.url), chromeTabId: Number.isInteger(v.chromeTabId) ? v.chromeTabId : null }
+          : null;
+      if (!wanted) {
+        switchCandidate = null;
+        switchArmed = false;
+        switchWaitLogged = false;
+        return;
+      }
+      if (matchesWanted({ pluginId: lastPluginId, chromeTabId: lastChromeTabId, url: lastUrl })) {
+        switchCandidate = null;
+        switchArmed = false;
+        switchWaitLogged = false;
+        return;
+      }
+      switchCandidate = null;
+      switchArmed = true;
+      switchWaitLogged = false;
+    }
+
+    let closeWanted = null;
+    const seenRosters = new Set();
 
     let lastBrands = null;
     let lastUa = '';
@@ -219,6 +291,7 @@ function openBridge({
     healthTimer = setInterval(sendHealth, HEALTH_INTERVAL_MS);
 
     const tabWaiters = [];
+    const switchWaiters = [];
     const tabOpeners = new Map();
     const projectWaiters = new Map();
     const idWaiters = new Map();
@@ -285,6 +358,103 @@ function openBridge({
             return;
           }
 
+          if (m.type === 'closedTabs') {
+            if (closeWanted) {
+              closeWanted.results.push({
+                pluginId: String(m.pluginId || ''),
+                closed: Number(m.closed) || 0,
+
+                ...(m.error ? { error: String(m.error) } : {}),
+
+                ...(m.seen && typeof m.seen === 'object' ? { seen: m.seen } : {}),
+              });
+              onLog(
+                `[bridge:${port}] 相方 ${m.pluginId || '(名札なし)'} が ChatGPT のタブを ${Number(m.closed) || 0} 枚 閉じました` +
+                  (m.error ? `（閉じきれなかった: ${m.error}）` : '')
+              );
+              if (closeWanted.port && (Number(m.closed) || 0) > 0 && !m.error && closeWanted.early) closeWanted.early();
+            }
+            return;
+          }
+          if (m.type === 'claimResult') {
+            const claimId = String(m.id || '');
+            const waiter = claimWaiters.get(claimId);
+            if (waiter && waiter.socket === ws) {
+              claimWaiters.delete(claimId);
+              waiter.resolve(m);
+            }
+            return;
+          }
+          if (m.type === 'roster') {
+            const id = typeof m.pluginId === 'string' ? m.pluginId : '';
+            const windows = Array.isArray(m.windows) ? m.windows : [];
+            const count = windows.reduce((n, w) => n + ((w && w.tabs && w.tabs.length) || 0), 0);
+
+            const sends1h = Number.isFinite(Number(m.sends1h)) ? Math.max(0, Number(m.sends1h)) : 0;
+            const sendsOldestAt = Number.isFinite(Number(m.sendsOldestAt)) ? Math.max(0, Number(m.sendsOldestAt)) : 0;
+
+            const version = typeof m.version === 'string' ? m.version.slice(0, 20) : '';
+
+            const browser = m.browser && typeof m.browser.ua === 'string' ? { ua: m.browser.ua.slice(0, 400) } : null;
+            rosters.set(id || 'unnamed', { pluginId: id, windows, at: Date.now(), sends1h, sendsOldestAt, version, browser });
+            if (!seenRosters.has(id)) {
+              seenRosters.add(id);
+              onLog(`[bridge:${port}] 相方が名乗りました: ${id || '(名札なし)'}（窓 ${windows.length} / タブ ${count}${version ? ` / 版 ${version}` : ' / 版を名乗らない古い相方'}）`);
+            }
+            try {
+              onRoster({ pluginId: id, windows, at: Date.now() });
+            } catch {
+
+            }
+
+            if (wanted && wanted.url && (!wanted.pluginId || wanted.pluginId === id)) {
+              const tabs = windows.flatMap((w) => (w && Array.isArray(w.tabs) ? w.tabs : []));
+
+              const urlHits = (href) => pathHits(href, wanted.url);
+              const byUrl = (x) => !!x && urlHits(x.url);
+              const byId = wanted.chromeTabId !== null ? tabs.find((x) => byUrl(x) && x.chromeTabId === wanted.chromeTabId) : null;
+              const pathHitTabs = tabs.filter(byUrl);
+
+              const hit = byId || (pathHitTabs.length === 1 ? pathHitTabs[0] : null);
+              const targetAlive = !!sock && sock.readyState === 1;
+
+              const alreadyThere = targetAlive && matchesWanted({ pluginId: lastPluginId, chromeTabId: lastChromeTabId, url: lastUrl });
+              const wantKey = hit ? `${id}|${Number.isInteger(hit.chromeTabId) ? hit.chromeTabId : String(hit.url || '')}` : '';
+              const askedJustNow = !!wantKey && lastWantTab.key === wantKey && Date.now() - lastWantTab.at < WANT_TAB_REPEAT_MS;
+              if (hit && !waiting && !alreadyThere && !askedJustNow) {
+                try {
+                  const want = { type: 'wantTab', url: wanted.url };
+                  if (Number.isInteger(hit.chromeTabId)) want.chromeTabId = hit.chromeTabId;
+                  ws.send(JSON.stringify(want));
+                  lastWantTab = { key: wantKey, at: Date.now() };
+                  onLog(`[bridge:${port}] 覚えている対話が在ったので、繋ぎ直しを頼みました`);
+                } catch {
+
+                }
+              }
+            }
+
+            if (closeWanted && !closeWanted.done.has(id)) {
+              closeWanted.done.add(id);
+              if (closeWanted.askedAt) closeWanted.askedAt.set(id, Date.now());
+              try {
+
+                ws.send(JSON.stringify(closeWanted.port ? { type: 'closeTabsOnPort', port: closeWanted.port } : { type: 'closeTabs' }));
+                onLog(`[bridge:${port}] 相方 ${id || '(名札なし)'} へ ChatGPT のタブを閉じるよう頼みました`);
+              } catch {
+                closeWanted.done.delete(id);
+              }
+            }
+            return;
+          }
+
+          if (m.type === 'tabinfo') {
+            if (ws === sock && Number.isInteger(m.chromeTabId)) {
+              lastChromeTabId = m.chromeTabId;
+              onLog(`[bridge:${port}] タブの番号: ${lastChromeTabId}（後から届いた）`);
+            }
+            return;
+          }
           if (m.type === 'hello') {
 
             if (m.thinking && typeof m.thinking === 'object') {
@@ -301,6 +471,92 @@ function openBridge({
             const id = typeof m.tabId === 'string' && m.tabId ? m.tabId : null;
 
             const who = id || '(名札なし)';
+
+            const helloTab = {
+              pluginId: typeof m.pluginId === 'string' ? m.pluginId : '',
+              chromeTabId: Number.isInteger(m.chromeTabId) ? m.chromeTabId : null,
+              url: m.url || '',
+            };
+            const switchHit = switchArmed && !waiting && !switchCandidate && matchesWanted(helloTab) && !matchesWanted({ pluginId: lastPluginId, chromeTabId: lastChromeTabId, url: lastUrl });
+            if (switchHit) {
+              const candidate = {
+                socket: ws,
+                targetId: who,
+                pluginId: helloTab.pluginId,
+                chromeTabId: helloTab.chromeTabId,
+                url: helloTab.url,
+                title: m.title || '',
+                turns: typeof m.turns === 'number' ? m.turns : -1,
+                protocol: m.protocol || 0,
+                brands: Array.isArray(m.brands) ? m.brands : null,
+                ua: typeof m.ua === 'string' ? m.ua : '',
+              };
+              switchCandidate = candidate;
+              void claimTab('claim', 5000, ws).then((claim) => {
+                if (switchCandidate !== candidate) return;
+                switchCandidate = null;
+                if (!claim.ok || claim.why === 'timeout-old-companion' || ws.readyState !== 1) {
+                  try {
+                    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'not_target' }));
+                  } catch {
+
+                  }
+                  return;
+                }
+
+                const oldSock = sock;
+                const oldTitle = lastTitle;
+                targetId = candidate.targetId;
+                sock = candidate.socket;
+                healthEverHealthy = false;
+                healthOldPeerReported = false;
+                try {
+                  portlock.markTab(openedPort, true);
+                } catch {
+
+                }
+                generation += 1;
+                tabProtocol = candidate.protocol;
+                lastPluginId = candidate.pluginId;
+                lastChromeTabId = candidate.chromeTabId;
+                lastBrands = candidate.brands;
+                lastUa = candidate.ua;
+                lastUrl = candidate.url;
+                if (candidate.turns >= 0) lastTurns = candidate.turns;
+                lastTitle = candidate.title;
+                onLog(`[bridge:${openedPort}] 送り先のタブを替えました: ${oldTitle || '?'} → ${candidate.title || '?'}`);
+                onLog(`[bridge:${port}] hello: ${candidate.title} / ${candidate.url}`);
+                if (tabProtocol !== EXPECTED_TAB_PROTOCOL) {
+                  onLog(`[bridge] タブ側が古いままです（タブ ${tabProtocol} / こちら ${EXPECTED_TAB_PROTOCOL}）`);
+                }
+                try {
+                  ws.send(JSON.stringify({ type: 'welcome', protocol: EXPECTED_TAB_PROTOCOL, editorId }));
+                } catch {
+
+                }
+                if (oldSock && oldSock !== ws && oldSock.readyState === 1) {
+                  try {
+                    oldSock.send(JSON.stringify({ type: 'release', editorId }));
+                    oldSock.send(JSON.stringify({ type: 'not_target' }));
+                  } catch {
+
+                  }
+                }
+                switchArmed = false;
+                switchWaitLogged = false;
+                while (switchWaiters.length) switchWaiters.shift()();
+              }).catch(() => {
+                if (switchCandidate !== candidate) return;
+                switchCandidate = null;
+                try {
+                  if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'not_target' }));
+                } catch {
+
+                }
+              });
+              return;
+            }
+            if (switchCandidate && switchCandidate.socket === ws) return;
 
             const free = sock === null || sock.readyState !== 1;
             if (targetId === null || free || targetId === who) {
@@ -320,6 +576,14 @@ function openBridge({
               generation += 1;
               tabProtocol = m.protocol || 0;
 
+              const pluginId = typeof m.pluginId === 'string' ? m.pluginId : '';
+              if (pluginId && pluginId !== lastPluginId) {
+                lastPluginId = pluginId;
+                onLog(`[bridge:${port}] 相方: ${pluginId}`);
+              }
+
+              lastChromeTabId = Number.isInteger(m.chromeTabId) ? m.chromeTabId : null;
+              if (lastChromeTabId !== null) onLog(`[bridge:${port}] タブの番号: ${lastChromeTabId}`);
               lastBrands = Array.isArray(m.brands) ? m.brands : null;
               lastUa = typeof m.ua === 'string' ? m.ua : '';
               lastUrl = m.url || '';
@@ -333,7 +597,10 @@ function openBridge({
               }
 
               try {
-                ws.send(JSON.stringify({ type: 'welcome', protocol: EXPECTED_TAB_PROTOCOL }));
+
+                ws.send(
+                  JSON.stringify({ type: 'welcome', protocol: EXPECTED_TAB_PROTOCOL, editorId })
+                );
               } catch {
 
               }
@@ -461,6 +728,11 @@ function openBridge({
             lastTitle = m.title || lastTitle;
             if (typeof m.turns === 'number') lastTurns = m.turns;
             const afterId = conversationIdOf(lastUrl);
+            if (awaitingCreatedConversationId && afterId && afterId !== beforeId) {
+              createdConversationIds.add(afterId);
+              awaitingCreatedConversationId = false;
+              onLog(`[bridge:${port}] この橋が作った対話を記録しました: ${afterId}`);
+            }
 
             onLog(`[bridge:${port}] 場所が変わりました: ${lastUrl}（吹き出し ${lastTurns}）`);
 
@@ -517,6 +789,10 @@ function openBridge({
           if (m.type === 'tabAlive') {
             if (waiting) {
               waiting.lastAlive = Date.now();
+              waiting.liveness = noteLiveness(waiting.liveness, {
+                kind: m.busy ? 'busy' : 'tabAlive',
+                at: waiting.lastAlive,
+              });
 
               const late = Number(m.late) || 0;
               if (late > (waiting.worstLate || 0)) waiting.worstLate = late;
@@ -527,16 +803,29 @@ function openBridge({
           if (m.type === 'start') {
             waiting.streamOpened = true;
             waiting.beat = null;
+            waiting.liveness = noteLiveness(waiting.liveness, { kind: 'start', at: Date.now() });
             return;
           }
 
           if (m.type === 'stream_beat') {
+
+            const prev = waiting.beat;
             waiting.beat = m;
+            const beforeProgress = Number(waiting.liveness && waiting.liveness.lastProgressAt) || 0;
+            waiting.liveness = noteLiveness(waiting.liveness, {
+              kind: 'stream_beat',
+              at: Date.now(),
+              events: Number(m.events) || 0,
+              bytes: Number(m.bytes) || 0,
+              chars: Number(m.chars) || 0,
+            });
+            if ((Number(waiting.liveness.lastProgressAt) || 0) > beforeProgress || !prev) waiting.quiet = 0;
             return;
           }
           if (m.type === 'busy') {
 
             waiting.quiet = 0;
+            waiting.liveness = noteLiveness(waiting.liveness, { kind: m.tool ? 'tool' : 'busy', at: Date.now() });
             waiting.onBusy(String(m.tool || ''));
             return;
           }
@@ -584,12 +873,15 @@ function openBridge({
           }
           if (m.type === 'delta') {
             waiting.text = stripUiMarks(waiting.text + m.text);
+            waiting.liveness = noteLiveness(waiting.liveness, { kind: 'text', at: Date.now() });
             waiting.onDelta(waiting.text);
           } else if (m.type === 'replace') {
             waiting.text = stripUiMarks(m.text);
+            waiting.liveness = noteLiveness(waiting.liveness, { kind: 'text', at: Date.now() });
             waiting.onDelta(waiting.text);
           } else if (m.type === 'done') {
             if (m.text) waiting.text = stripUiMarks(m.text);
+            waiting.liveness = noteLiveness(waiting.liveness, { kind: m.complete === true ? 'end' : 'stream_beat', at: Date.now() });
 
             if (m.complete !== true) {
               waiting.cut = true;
@@ -606,6 +898,7 @@ function openBridge({
             if (w.abortWatch) clearInterval(w.abortWatch);
             w.resolve(w.text);
           } else if (m.type === 'error') {
+            waiting.liveness = noteLiveness(waiting.liveness, { kind: 'end', at: Date.now() });
             const w = waiting;
             waiting = null;
             clearTimeout(w.timer);
@@ -630,6 +923,13 @@ function openBridge({
             e.status = Number(m.status) || 0;
 
             e.tooLong = /input_too_large|message_length_exceeds_limit/.test(String(m.message || ''));
+            e.usageLimit = Number(m.status) === 429 && /limit of messages|reached our limit|usage[_ ]limit/i.test(String(m.message || ''));
+
+            e.retryAfter = m.retryAfter == null ? null : String(m.retryAfter);
+            e.rateLimitReset = m.rateLimitReset == null ? null : String(m.rateLimitReset);
+            e.rateLimitRemaining = m.rateLimitRemaining == null ? null : String(m.rateLimitRemaining);
+
+            e.reason = String(m.reason || '');
 
             e.stuckUi = /STUCK_UI/.test(String(m.message || ''));
             w.reject(e);
@@ -637,6 +937,7 @@ function openBridge({
         });
 
         ws.on('close', () => {
+          if (switchCandidate && switchCandidate.socket === ws) switchCandidate = null;
 
           if (sock !== ws) return;
           sock = null;
@@ -752,6 +1053,36 @@ function openBridge({
       );
     }
 
+    function waitForTabSwitch(ms = 80000) {
+      if (!switchArmed) return Promise.resolve();
+      if (!switchWaitLogged) {
+        switchWaitLogged = true;
+        onLog(`[bridge:${openedPort}] 選んだタブが繋がるのを待っています`);
+      }
+      return new Promise((res, rej) => {
+        let done = false;
+        const fn = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          const i = switchWaiters.indexOf(fn);
+          if (i >= 0) switchWaiters.splice(i, 1);
+          res();
+        };
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          const i = switchWaiters.indexOf(fn);
+          if (i >= 0) switchWaiters.splice(i, 1);
+          const e = new Error(t('br.pickedTabLate'));
+          e.transient = true;
+          e.delivered = false;
+          rej(e);
+        }, ms);
+        switchWaiters.push(fn);
+      });
+    }
+
     function waitForTab(ms = RECONNECT_WAIT_MS) {
 
       if (sock && tabProtocol) return Promise.resolve();
@@ -851,6 +1182,7 @@ function openBridge({
       } = {}
     ) {
       if (closed) throw new Error(t('br.closed'));
+      if (switchArmed) await waitForTabSwitch(80000);
       if (waiting) throw new Error(t('br.busy'));
       if (!sock || !tabProtocol) await waitForTab(CONNECT_TIMEOUT_MS);
 
@@ -859,42 +1191,26 @@ function openBridge({
           t('br.oldTab', { tab: tabProtocol, here: EXPECTED_TAB_PROTOCOL }) + '\n' + t('br.oldTabHow')
         );
       }
+
+      if (mustStayInProject && homeUrl) {
+        const want = projectIdOf(homeUrl);
+        if (want) {
+          const now = await probe(PROJECT_PROBE_MS).catch(() => ({ ok: false }));
+          const here = now.ok && now.url ? now.url : String(lastUrl || '');
+          if (projectIdOf(here) !== want) {
+            onLog(`[bridge:${openedPort}] ${t('br.projectGone', { where: here })}`);
+            const e = new Error(t('br.projectGone', { where: here }));
+            e.projectGone = true;
+            e.url = here;
+            e.delivered = false;
+            throw e;
+          }
+        }
+      }
       seq += 1;
       return await new Promise((res, rej) => {
 
-        const timer = setTimeout(() => {
-          const w = waiting;
-          waiting = null;
-          if (w) {
-            clearInterval(w.watch);
-            if (w.abortWatch) clearInterval(w.abortWatch);
-
-            const silentMs = Date.now() - (w.lastAlive || 0);
-            const worstLate = w.worstLate || 0;
-            const wedged = silentMs > TAB_FROZEN_MS || worstLate >= TAB_FROZEN_MS;
-
-            const beat = w.beat;
-            let why;
-            if (wedged) {
-              why = t('br.tabFrozen', {
-                sec: String(Math.round(silentMs / 1000)),
-                late: String(Math.round(worstLate / 1000)),
-              });
-            } else if (!w.streamOpened) {
-              why = t('br.timeoutNoStream', {
-                sec: String(Math.round(ANSWER_TIMEOUT_MS / 1000)),
-              });
-            } else if (beat && Number(beat.chars) === 0) {
-              why = t('br.timeoutNoText', {
-                sec: String(Math.round(Number(beat.ms || 0) / 1000)),
-                events: String(Number(beat.events) || 0),
-              });
-            } else {
-              why = t('br.timeout');
-            }
-            w.reject(new Error(why));
-          }
-        }, ANSWER_TIMEOUT_MS);
+        const timer = null;
 
         const abortWatch = shouldStop
           ? setInterval(() => {
@@ -927,30 +1243,53 @@ function openBridge({
             : w.text
               ? SILENCE_AFTER_TEXT_MS
               : SILENCE_BEFORE_TEXT_MS;
-          if (w.quiet < limit) return;
+          if (!shouldStall(w.liveness, Date.now(), limit)) return;
           waiting = null;
           clearTimeout(w.timer);
           clearInterval(w.watch);
           if (w.abortWatch) clearInterval(w.abortWatch);
-          onLog(
-            `[bridge:${port}] 相手が ${Math.round(w.quiet / 1000)} 秒だまりました（${w.text.length} 文字で止まっています）`
+
+          const progressSilentSec = Math.round(
+            (Date.now() - ((w.liveness && w.liveness.lastProgressAt) || 0)) / 1000
           );
-          if (w.text) {
+          onLog(
+            `[bridge:${port}] 相手の進展が ${progressSilentSec} 秒止まりました（${w.text.length} 文字、last=${String((w.liveness && w.liveness.lastKind) || '?')}）`
+          );
 
-            w.resolve(w.text);
+          const silentMs = Date.now() - (w.lastAlive || 0);
+          const worstLate = w.worstLate || 0;
+          const wedged = silentMs > TAB_FROZEN_MS || worstLate >= TAB_FROZEN_MS;
+          const beat = w.beat;
+          let why;
+          if (wedged) {
+            why = t('br.tabFrozen', {
+              sec: String(Math.round(silentMs / 1000)),
+              late: String(Math.round(worstLate / 1000)),
+            });
+          } else if (!w.streamOpened) {
+            why = t('br.timeoutNoStream', {
+              sec: String(Math.round(limit / 1000)),
+            });
+          } else if (beat && Number(beat.chars) === 0) {
+            why = t('br.timeoutNoText', {
+              sec: String(Math.round(Number(beat.ms || limit) / 1000)),
+              events: String(Number(beat.events) || 0),
+            });
           } else {
-            const e = new Error(
-              t('br.silent', { sec: Math.round(w.quiet / 1000) })
-            );
-
-            e.delivered = !!w.submitted;
-            e.transient = !w.submitted;
-            w.reject(e);
+            why = t('br.silent', { sec: Math.round(limit / 1000) });
           }
+          const e = new Error(why);
+          e.stalled = true;
+          e.partialText = w.text;
+
+          e.delivered = !!w.submitted;
+          e.transient = !w.submitted;
+          w.reject(e);
         }, SILENCE_STEP_MS);
 
         waiting = {
           text: '',
+          liveness: createLiveness(Date.now()),
           resolve: res,
           reject: rej,
           timer,
@@ -1195,6 +1534,36 @@ function openBridge({
       });
     }
 
+    async function claimTab(kind, timeoutMs = 5000, claimSock = sock) {
+      if (!claimSock) return { ok: false, why: 'no-tab' };
+      const id = `c${++seq}`;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          claimWaiters.delete(id);
+
+          resolve({ ok: true, why: 'timeout-old-companion' });
+        }, timeoutMs);
+        claimWaiters.set(id, {
+          socket: claimSock,
+          resolve: (m) => {
+            clearTimeout(timer);
+            resolve({
+              ok: !!m.ok,
+              heldBy: String(m.heldBy || ''),
+              why: String(m.why || ''),
+            });
+          },
+        });
+        try {
+          claimSock.send(JSON.stringify({ type: kind, id, editorId }));
+        } catch (e) {
+          clearTimeout(timer);
+          claimWaiters.delete(id);
+          resolve({ ok: false, why: String((e && e.message) || e) });
+        }
+      });
+    }
+
     async function listModels(timeoutMs = 10000) {
       if (!sock) await waitForTab(CONNECT_TIMEOUT_MS);
       const id = `m${++seq}`;
@@ -1215,11 +1584,16 @@ function openBridge({
       });
     }
 
-    async function cleanupConversation(action, timeoutMs = 10000) {
+    async function cleanupConversation(action, conversationId = '', timeoutMs = 10000) {
+      if (String(action || '') !== 'archive') {
+        return { ok: false, status: 0, why: 'cleanup-action-disabled' };
+      }
       if (!sock) await waitForTab(CONNECT_TIMEOUT_MS);
-      const match = String(lastUrl || '').match(/\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i);
-      const conversationId = match ? match[1] : '';
-      if (!conversationId) return { ok: false, why: 'no-conversation-id', conversationId: '' };
+      const explicitId = String(conversationId || '').trim();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(explicitId)) {
+        return { ok: false, why: 'invalid-conversation-id', conversationId: '' };
+      }
+      conversationId = explicitId;
       const id = `k${++seq}`;
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -1294,7 +1668,67 @@ function openBridge({
         return { url: lastUrl, id: got };
     }
 
-    async function newConversation(url) {
+    async function newConversation(url, lifecycle = {}) {
+      const lifecycleReason = String(lifecycle && lifecycle.reason || '');
+      const lifecycleActor = String(lifecycle && lifecycle.actor || '');
+
+      const lifecycleActors = {
+        'entry-send': 'user',
+        'user-new': 'user',
+        'subagent-start': 'subagent',
+        'recovery-no-tool': 'agent-recovery',
+        'recovery-no-call': 'agent-recovery',
+        'recovery-bad-format': 'agent-recovery',
+        'recovery-downgraded': 'agent-recovery',
+      };
+      const expectedActor = lifecycleActors[lifecycleReason];
+      if (!expectedActor || lifecycleActor !== expectedActor) {
+        throw new Error(t('br.badLifecycle', { reason: lifecycleReason || 'none', actor: lifecycleActor || 'none' }));
+      }
+
+      const gapMs = Number.isFinite(Number(lifecycle.gapMs)) ? Math.max(0, Number(lifecycle.gapMs)) : createGapMs;
+      const waitedMs = await creategate.waitGap({ key: lastPluginId || 'unknown', gapMs });
+      if (waitedMs >= 1000) onLog(`[bridge:${openedPort}] 対話を続けて作らないよう ${Math.round(waitedMs / 1000)} 秒待ちました`);
+      const want = projectIdOf(url || homeUrl || '');
+      const beforeId = conversationIdOf(lastUrl);
+      awaitingCreatedConversationId = true;
+      let r;
+      try {
+        r = await landConversation(url);
+      } catch (e) {
+        awaitingCreatedConversationId = false;
+        throw e;
+      }
+
+      if (want && projectIdOf(r && r.url) === want) {
+        await new Promise((res) => setTimeout(res, PROJECT_SETTLE_MS));
+
+        const now = await probe(PROJECT_PROBE_MS).catch(() => ({ ok: false }));
+        const seen = now.ok && now.url ? now.url : String(lastUrl || '');
+        if (projectIdOf(seen) !== want) r.url = seen;
+      }
+      if (want && projectIdOf(r && r.url) !== want) {
+        awaitingCreatedConversationId = false;
+        const where = String((r && r.url) || lastUrl || '');
+        onLog(`[bridge:${openedPort}] ${t('br.projectGone', { where })}`);
+        const e = new Error(t('br.projectGone', { where }));
+        e.projectGone = true;
+        e.url = where;
+        throw e;
+      }
+      if (r && r.fresh === false) awaitingCreatedConversationId = false;
+      const afterId = conversationIdOf((r && r.url) || lastUrl);
+      if (r && r.fresh === true && afterId && afterId !== beforeId) {
+        createdConversationIds.add(afterId);
+        awaitingCreatedConversationId = false;
+      }
+      if (r && r.fresh === true && (lifecycleReason || lifecycleActor)) {
+        onLog(`[bridge:${openedPort}] 新しい対話を作成: ${lifecycleReason || 'unknown'}${lifecycleActor ? ` (${lifecycleActor})` : ''}`);
+      }
+      return r;
+    }
+
+    async function landConversation(url) {
 
       if (!url) ensureProjectHome();
       if (!sock) await waitForTab(CONNECT_TIMEOUT_MS);
@@ -1371,11 +1805,61 @@ function openBridge({
     }
 
     const api = {
+
+      roster: () => [...rosters.values()],
+
+      useTab: (v) => {
+        armTabSwitch(v);
+        if (!switchArmed) void claimTab('claim').catch(() => {});
+      },
+
+      wantTab: (v) => {
+        wanted =
+          v && v.url
+            ? { pluginId: String(v.pluginId || ''), url: String(v.url), chromeTabId: Number.isInteger(v.chromeTabId) ? v.chromeTabId : null }
+            : null;
+      },
+
+      chromeTabId: () => lastChromeTabId,
+
+      pluginId: () => lastPluginId,
+
+      pluginSends: () => {
+        const r = lastPluginId ? rosters.get(lastPluginId) : null;
+        return r ? { pluginId: r.pluginId, sends1h: r.sends1h || 0, oldestAt: r.sendsOldestAt || 0, at: r.at } : null;
+      },
+
+      closeTabs: (waitMs = 70000, { port: onlyPort = 0 } = {}) =>
+        new Promise((resolve) => {
+          closeWanted = { done: new Set(), results: [], port: Number.isInteger(onlyPort) && onlyPort > 0 ? onlyPort : 0 };
+          const mine = closeWanted;
+          mine.askedAt = new Map();
+          const finish = () => {
+            if (closeWanted !== mine) return;
+            clearTimeout(timer);
+            const r = { asked: [...mine.done], results: mine.results };
+            closeWanted = null;
+            resolve(r);
+          };
+
+          const settle = () => {
+            const replied = new Set(mine.results.map((x) => x.pluginId));
+            const late = [...mine.askedAt.entries()].filter(([id, at]) => !replied.has(id) && Date.now() - at < 6000);
+            if (!late.length) return void finish();
+            timer = setTimeout(settle, 500);
+          };
+          let timer = setTimeout(settle, waitMs);
+
+          mine.early = finish;
+        }),
+      claim: (timeoutMs) => claimTab('claim', timeoutMs),
+      release: (timeoutMs) => claimTab('release', timeoutMs),
       ask,
       conversationUsage,
       waitForTab,
       newConversation,
       setProjectUrl,
+      projectUrl: () => homeUrl,
       requireProject,
       listProjects,
       projectId,
@@ -1397,6 +1881,7 @@ function openBridge({
 
       conversationUrl: () => (isConversationUrl(lastUrl) ? lastUrl : ''),
       conversationId: () => conversationIdOf(lastUrl),
+      createdConversationIds: () => [...createdConversationIds],
 
       tabUrl: () => lastUrl,
 

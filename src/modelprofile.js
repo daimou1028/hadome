@@ -4,10 +4,18 @@ const WEAK = /(^|[-_])(mini|nano)([-_]|$)/i;
 
 const CHATGPT = /^(gpt|chatgpt|o[0-9])/i;
 
+function treatedAsDead(name) {
+  return String(process.env.BRIDGE_TREAT_AS_DEAD || '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(name);
+}
+
 function profileFor(slug) {
   const name = String(slug || '').trim().toLowerCase();
   if (!name) return 'chatgpt';
-  if (DEAD.has(name)) return 'dead';
+  if (DEAD.has(name) || treatedAsDead(name)) return 'dead';
   if (WEAK.test(name)) return 'weak';
   if (CHATGPT.test(name)) return 'chatgpt';
   return 'base';

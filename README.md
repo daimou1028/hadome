@@ -202,13 +202,14 @@ Settings live under `chatgptBridge.*`.
 | `diagnosticsAfterEdit` | `true` | Send new problems back after an edit |
 | `preventDoneWithOpenTodos` | `true` | Refuse to finish while todos are open |
 | `maxTurns` | `0` | Stop after N turns (`0` = no limit) |
+| `maxSendsPerHour` | `0` | Maximum sends per hour (`0` = no limit) |
 | `contextWindow` | `0` | Override the assumed context size |
 | `subAgents` | `2` | How many sub-agents may run at once (0–4) |
 | `model` | `""` | Model for the main agent (empty = whatever is selected in the ChatGPT tab) |
 | `thinkingEffort` | `""` | Thinking effort for the main agent (`min` / `standard` / `extended` / `max`) |
 | `subAgentModel` | `""` | Model for sub-agents only |
 | `subAgentThinkingEffort` | `""` | Thinking effort for sub-agents only |
-| `subAgentCleanup` | `archive-success` | Finished sub-agent conversations: `archive-success` / `archive-all` / `delete-success` (cannot be undone) / `none` |
+| `subAgentCleanup` | `none` | Finished sub-agent conversations: no cleanup when unset; explicit settings can choose `archive-success` / `archive-all`. Deletion remains unavailable until it is verified on disposable conversations |
 | `subPortBase` | `8810` | First port used for sub-agent tabs |
 | `restartGapSeconds` | `20` | Wait this long before re-opening a conversation |
 | `loadGlobalRules` | `true` | Read your global agent rules |

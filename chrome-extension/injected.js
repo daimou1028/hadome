@@ -50,6 +50,16 @@
       .filter((value) => typeof value === 'string');
   }
 
+  function refusalReason(status, body) {
+    const s = Number(status) || 0;
+    const t = String(body || '');
+    if (/unusual activity/i.test(t)) return 'unusualActivity';
+    if (s === 429 && /limit of messages|reached our limit|usage[_ ]limit/i.test(t)) return 'usageLimit';
+    if (s === 429) return 'rateLimit';
+    if (s >= 500) return 'unavailable';
+    return '';
+  }
+
   function modelNote(reason) {
     post('note', { text: '[model] 替えません: ' + reason });
   }
@@ -115,11 +125,7 @@
     const action = data && data.action;
     const conversationId = data && data.conversationId;
     const validId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(conversationId || ''));
-    const body = action === 'archive'
-      ? { is_archived: true }
-      : action === 'delete'
-        ? { is_visible: false }
-        : null;
+    const body = action === 'archive' ? { is_archived: true } : null;
     if (!validId || !body) {
       post('cleaned', { id, ok: false, status: 0, why: !validId ? 'invalid conversationId' : 'unknown action' });
       return;
@@ -514,6 +520,8 @@
     const head = [];
     const tail = [];
 
+    let 流れの断り = null;
+
     const BEAT_MS = 5000;
     let lastTextAt = openedAt;
     const ctx = {
@@ -584,6 +592,10 @@
               continue;
             }
 
+            if (!流れの断り && parsed && typeof parsed.error === 'string' && parsed.error && !parsed.message) {
+              流れの断り = { message: parsed.error, code: typeof parsed.error_code === 'string' ? parsed.error_code : '' };
+            }
+
             if (parsed.type === 'stream_handoff' && Array.isArray(parsed.options)) {
               const ws = parsed.options.find((option) => option && option.type === 'subscribe_ws_topic');
               if (ws && typeof ws.topic_id === 'string') registerHandoff(ws.topic_id, ctx);
@@ -597,6 +609,29 @@
       const complete = isComplete();
       if (ctx.handoffTopic) {
         post('busy', { requestId, tool: 'stream_handoff' });
+      } else if (流れの断り && assembled.length === 0) {
+
+        const 字 = 流れの断り.message + (流れの断り.code ? ` [${流れの断り.code}]` : '');
+        const 種類 = /usage[_ ]limit/i.test(字) ? refusalReason(429, 字) : refusalReason(status, 字);
+        post('error', {
+          requestId,
+          status: 種類 === 'usageLimit' ? 429 : status,
+          reason: 種類,
+          message: `相手が断りました（流れの中。${status}）: ${字.slice(0, 1000)}`,
+        });
+        post('stream_cut', {
+          requestId,
+          url,
+          status,
+          why: 'refused-in-stream',
+          ms: Date.now() - openedAt,
+          events,
+          bytes,
+          chars: 0,
+          complete,
+          head,
+          tail,
+        });
       } else {
         post('done', { requestId, text: assembled, complete });
 
@@ -671,10 +706,13 @@
             else if (override.thinkingEffort) body.thinking_effort = override.thinkingEffort;
             const newEffort = typeof body.thinking_effort === 'string' ? body.thinking_effort : 'なし';
             fetchArgs = [args[0], { ...init, body: JSON.stringify(body) }, ...args.slice(2)];
+
+            const 替わった = body.model !== oldModel || newEffort !== (oldEffort || 'なし');
             post('note', {
-              text:
-                '[model] 送る本文のモデルを ' + oldModel + ' → ' + body.model +
-                '、思考の量を ' + (oldEffort || 'なし') + ' → ' + newEffort + ' に替えました',
+              text: 替わった
+                ? '[model] 送る本文のモデルを ' + oldModel + ' → ' + body.model +
+                  '、思考の量を ' + (oldEffort || 'なし') + ' → ' + newEffort + ' に替えました（画面の札は触っていません）'
+                : '[model] 送る本文のモデルは ' + body.model + '、思考の量は ' + newEffort + ' のままです（替える所が無い）',
             });
           }
         }
@@ -685,7 +723,8 @@
 
     const res = await origFetch.apply(this, fetchArgs);
     try {
-      if (!TARGET_PATH.test(urlOf(fetchArgs[0])) || !res.body) return res;
+
+      if (!TARGET_PATH.test(urlOf(fetchArgs[0]))) return res;
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       if (!res.ok) {
@@ -699,27 +738,44 @@
             return '';
           }
         };
-        const 添え = [見出し('retry-after'), 見出し('x-ratelimit-reset'), 見出し('cf-ray')]
+        const retryAfter = 見出し('retry-after').replace(/^retry-after=/, '');
+        const rateLimitReset = 見出し('x-ratelimit-reset').replace(/^x-ratelimit-reset=/, '');
+        const rateLimitRemaining = 見出し('x-ratelimit-remaining').replace(/^x-ratelimit-remaining=/, '');
+        const 添え = [
+          見出し('retry-after'),
+          見出し('x-ratelimit-reset'),
+          見出し('x-ratelimit-remaining'),
+          見出し('cf-ray'),
+        ]
           .filter(Boolean)
           .join(' / ');
         const 尾 = 添え ? `［${添え}］` : '';
-        res
-          .clone()
-          .text()
+
+        const 読む = res.body ? res.clone().text() : Promise.resolve('');
+        読む
           .then((body) => {
             const 中身 = String(body || '');
             post('error', {
               requestId,
               status: res.status,
+              reason: refusalReason(res.status, 中身),
+              retryAfter,
+              rateLimitReset,
+              rateLimitRemaining,
+
               message:
                 `相手が断りました（${res.status}）${尾}: ` +
-                (中身 ? 中身.slice(0, 300) : '（中身は空でした）'),
+                (中身 ? 中身.slice(0, 1000) : '（中身は空でした）'),
             });
           })
           .catch((e) => {
             post('error', {
               requestId,
               status: res.status,
+              reason: refusalReason(res.status, ''),
+              retryAfter,
+              rateLimitReset,
+              rateLimitRemaining,
               message:
                 `相手が断りました（${res.status}）${尾}: ` +
                 `（中身を読めませんでした: ${(e && e.message) || e}）`,
@@ -727,6 +783,7 @@
           });
         return res;
       }
+      if (!res.body) return res;
 
       post('start', { requestId, url: urlOf(args[0]), status: res.status });
       const [forPage, forUs] = res.body.tee();

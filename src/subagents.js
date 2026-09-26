@@ -1,8 +1,9 @@
 const DEFAULT_LIMIT = 4;
 
-function makeSubagents({ pool, runOne, onProgress = () => {}, limit = DEFAULT_LIMIT } = {}) {
+function makeSubagents({ pool, runOne, onProgress = () => {}, limit = DEFAULT_LIMIT, shouldStop = () => false } = {}) {
   if (!pool) throw new Error('pool が要ります');
   if (typeof runOne !== 'function') throw new Error('runOne が要ります');
+  let stopped = false;
 
   async function run(tasks) {
     const wanted = (Array.isArray(tasks) ? tasks : [])
@@ -12,6 +13,7 @@ function makeSubagents({ pool, runOne, onProgress = () => {}, limit = DEFAULT_LI
 
     const take = wanted.slice(0, limit);
     const skipped = wanted.slice(limit);
+    if (stopped || shouldStop()) return { results: [], skipped: wanted, why: '停止中なので起動しません' };
 
     const results = await Promise.all(
       take.map(async (task, i) => {
@@ -22,8 +24,10 @@ function makeSubagents({ pool, runOne, onProgress = () => {}, limit = DEFAULT_LI
         try {
           slotOf.set(name, at);
           onProgress({ name, at, stateKey: 'waiting' });
+          if (stopped || shouldStop()) return { name, task, ok: false, why: '停止中なので起動しません' };
           slot = await pool.take(name);
           if (!slot) return { name, task, ok: false, why: '空いている場所がありません' };
+          if (stopped || shouldStop()) return { name, task, ok: false, why: '停止中なので実行しません' };
           onProgress({ name, at, stateKey: 'started' });
 
           const text = await runOne({ bridge: slot.bridge, task, name, at });
@@ -48,7 +52,7 @@ function makeSubagents({ pool, runOne, onProgress = () => {}, limit = DEFAULT_LI
     onProgress({ name, at, stateKey: 'running', turn, of });
   }
 
-  return { run, limit, tick };
+  return { run, limit, tick, stop: () => { stopped = true; } };
 }
 
 const PER_AGENT_LIMIT_CHARS = 12000;

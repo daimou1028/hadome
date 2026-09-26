@@ -1,4 +1,38 @@
 const { spawnSync, execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const DENIED_TTL_MS = 10 * 60 * 1000;
+
+const deniedFile = () =>
+  process.env.VSCB_PLACE_DENIED_FILE || path.join(os.tmpdir(), 'vscb-place-window-denied');
+
+function deniedAt() {
+  try {
+    const at = Number(fs.readFileSync(deniedFile(), 'utf8').trim());
+    return Number.isFinite(at) && Date.now() - at < DENIED_TTL_MS ? at : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function rememberDenied() {
+  try {
+    fs.mkdirSync(path.dirname(deniedFile()), { recursive: true });
+    fs.writeFileSync(deniedFile(), String(Date.now()));
+  } catch {
+
+  }
+}
+
+function forgetDenied() {
+  try {
+    fs.rmSync(deniedFile(), { force: true });
+  } catch {
+
+  }
+}
 
 const 既定の画面 = process.env.VSCB_SCREEN || '';
 
@@ -49,6 +83,8 @@ function mainPidFor(userDir) {
 }
 
 function placePid(pid) {
+
+  if (pid && deniedAt()) return `窓を動かしません（前のスクリプトで断られた為。10 分 で解けます: ${deniedFile()}）`;
   const s = pickScreen();
   if (!s || !pid) return '';
   const all = screens();
@@ -69,9 +105,12 @@ function placePid(pid) {
   const 実 = String((ax('get {position, size} of window 1').stdout || '')).trim();
   const [rx, ry] = 実.split(',').map((n) => Number(String(n).trim()));
   const 中 = rx >= s.x && rx < s.x + s.w && ry >= 上端 && ry < 上端 + s.h;
-  return 中
-    ? `窓を出す画面: ${s.name}（${実}）`
-    : `**窓を動かせませんでした**（いま ${実}。輔助使用の許可を確かめること）`;
+  if (中) {
+    forgetDenied();
+    return `窓を出す画面: ${s.name}（${実}）`;
+  }
+  rememberDenied();
+  return `**窓を動かせませんでした**（いま ${実}。輔助使用の許可を確かめること。10 分 の間は試し直しません: ${deniedFile()}）`;
 }
 
 async function placeByUserDataDir(userDir, { 待つ = 20000 } = {}) {

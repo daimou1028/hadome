@@ -51,6 +51,9 @@ function create(root, { workspace, nowMs }) {
     updatedAt: nowMs,
     conversationUrl: '',
     conversationId: '',
+
+    pluginId: '',
+    chromeTabId: null,
     entries: [],
 
     dropped: 0,
@@ -116,6 +119,8 @@ function list(root, { workspace } = {}) {
         count: Array.isArray(s.entries) ? s.entries.length : 0,
         conversationUrl: s.conversationUrl || '',
         conversationId: s.conversationId || '',
+        pluginId: s.pluginId || '',
+        chromeTabId: Number.isInteger(s.chromeTabId) ? s.chromeTabId : null,
       });
     } catch {
 

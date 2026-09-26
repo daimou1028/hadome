@@ -1,6 +1,12 @@
 (() => {
   const ORIGIN_MARK = 'chatgpt-bridge';
 
+  const USER_MESSAGE_SELECTOR =
+    '[data-message-author-role="user"], [data-chatgpt-search-unit-key$=":user"]';
+  const ANY_MESSAGE_SELECTOR =
+    '[data-message-author-role], [data-chatgpt-search-unit-key$=":user"], ' +
+    '[data-chatgpt-search-unit-key$=":assistant"]';
+
   const DEFAULT_PORT = 8765;
 
   const PORT_KEY = 'chatgpt-bridge-port';
@@ -69,7 +75,7 @@
     return tryPort;
   }
 
-  const TAB_PROTOCOL = 60;
+  const TAB_PROTOCOL = 62;
 
   const STILL_WRITING_WAIT_MS = 300000;
 
@@ -89,11 +95,18 @@
 
   let lastStuckSaid = 0;
 
+  let sawBlockAt = 0;
+
   const STUCK_AFTER_DONE_MS = 3000;
 
   const STUCK_AFTER_CUT_MS = 30000;
 
   const STUCK_NO_DELTA_MS = 45000;
+
+  const BLOCK_SUPPRESS_MS = 2 * STUCK_NO_DELTA_MS;
+  function blockedRecently() {
+    return sawBlockAt > 0 && Date.now() - sawBlockAt < BLOCK_SUPPRESS_MS;
+  }
 
   const TAB_KEY = 'chatgpt-bridge-tab-id';
   function tabId() {
@@ -109,6 +122,77 @@
     }
   }
   const TAB_ID = tabId();
+
+  let PLUGIN_ID = '';
+
+  let EDITOR_ID = '';
+
+  function 見比べる(msg) {
+    const 名札 = typeof msg.editorId === 'string' ? msg.editorId : '';
+    if (!名札) return;
+    if (EDITOR_ID && EDITOR_ID !== 名札) {
+      console.log(`[bridge] 港 ${tryPort} の向こうが別のエディターに替わりました（${EDITOR_ID} → ${名札}）`);
+    }
+    EDITOR_ID = 名札;
+  }
+  const pluginIdReady = new Promise((resolve) => {
+    try {
+      chrome.storage.local.get('pluginId', (v) => {
+        const 在る = v && typeof v.pluginId === 'string' && v.pluginId;
+        if (在る) {
+          PLUGIN_ID = v.pluginId;
+          resolve(PLUGIN_ID);
+          return;
+        }
+        const 作った = 'p-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+        PLUGIN_ID = 作った;
+        try {
+          chrome.storage.local.set({ pluginId: 作った });
+        } catch {
+
+        }
+        resolve(作った);
+      });
+    } catch {
+      PLUGIN_ID = 'p-' + Math.random().toString(36).slice(2, 10);
+      resolve(PLUGIN_ID);
+    }
+  });
+
+  let CHROME_TAB_ID = null;
+
+  const WHOAMI_RETRY_MS = [3000, 10000];
+  function askChromeTabId(attempt, done) {
+    let answered = false;
+    const next = () => {
+      if (answered) return;
+      answered = true;
+      done();
+      if (CHROME_TAB_ID === null && attempt < WHOAMI_RETRY_MS.length) {
+        setTimeout(() => askChromeTabId(attempt + 1, () => {}), WHOAMI_RETRY_MS[attempt]);
+      }
+    };
+    const 締め = setTimeout(next, 1500);
+    try {
+      chrome.runtime.sendMessage({ kind: 'whoami' }, (r) => {
+        void chrome.runtime.lastError;
+        const late = answered;
+        if (r && Number.isInteger(r.chromeTabId) && CHROME_TAB_ID === null) {
+          CHROME_TAB_ID = r.chromeTabId;
+
+          if ((late || attempt > 0) && alive) send({ type: 'tabinfo', chromeTabId: CHROME_TAB_ID });
+        }
+        clearTimeout(締め);
+        next();
+      });
+    } catch {
+      clearTimeout(締め);
+      next();
+    }
+  }
+  const chromeTabIdReady = new Promise((resolve) => askChromeTabId(0, resolve));
+
+  const identityReady = Promise.all([pluginIdReady, chromeTabIdReady]);
   const RECONNECT_MS = 3000;
 
   const STEP_MS = 150;
@@ -175,7 +259,11 @@
         protocol: TAB_PROTOCOL,
         tabId: TAB_ID,
 
-        turns: (() => { try { return document.querySelectorAll('[data-message-author-role]').length; } catch { return -1; } })(),
+        pluginId: PLUGIN_ID,
+
+        chromeTabId: CHROME_TAB_ID === null ? undefined : CHROME_TAB_ID,
+
+        turns: (() => { try { return document.querySelectorAll(ANY_MESSAGE_SELECTOR).length; } catch { return -1; } })(),
 
         thinking: thinkingState(),
 
@@ -279,6 +367,7 @@
 
       if (msg && msg.type === 'welcome') {
         clearTimeout(welcomeTimer);
+        見比べる(msg);
         everHello = true;
         stayed = 0;
         pinnedFailures = 0;
@@ -354,6 +443,28 @@
         send({ type: 'healthy', id: msg.id, heapMB });
         return;
       }
+
+      if (msg.type === 'claim' || msg.type === 'release') {
+
+        const 主 = typeof msg.editorId === 'string' ? msg.editorId : '';
+        const 返す = (r) => send({ type: 'claimResult', id: msg.id, ...r });
+        try {
+          chrome.runtime.sendMessage(
+            { kind: msg.type, editorId: 主, path: location.pathname },
+            (r) => {
+              if (chrome.runtime.lastError || !r) {
+
+                返す({ ok: true, heldBy: 主, why: 'no-background' });
+                return;
+              }
+              返す(r);
+            }
+          );
+        } catch {
+          返す({ ok: true, heldBy: 主, why: 'no-background' });
+        }
+        return;
+      }
       if (msg.type === 'close_tab') {
 
         try {
@@ -411,6 +522,24 @@
         return 名 && 名.length <= 60 ? 名 : '';
       };
 
+      const sidebarProjectRows = () =>
+        [...document.querySelectorAll('[data-app-action-sidebar-project-row]')]
+          .map((row) => ({
+            row,
+            id: row.getAttribute('data-app-action-sidebar-project-id') || '',
+            name: (row.getAttribute('data-app-action-sidebar-project-label') || '').replace(/\s+/g, ' ').trim(),
+          }))
+          .filter((x) => /^g-p-[A-Za-z0-9-]+$/.test(x.id) && x.name && x.name.length <= 60);
+      const sidebarProjectRow = (name) => sidebarProjectRows().find((x) => x.name === name) || null;
+
+      const openSidebarIfClosed = (press) => {
+
+        const trigger =
+          document.querySelector('button[data-app-shell-sidebar-trigger][aria-expanded="false"]') ||
+          document.querySelector('button[aria-controls="browser-sidebar-popover"][aria-expanded="false"]');
+        if (trigger) press(trigger);
+      };
+
       if (msg.type === 'list_projects') {
         const 列の印 = '[class*="project-unfurl-row"]';
 
@@ -421,6 +550,11 @@
 
         const 拾う = () => {
           const 出た = [];
+
+          for (const x of sidebarProjectRows()) {
+            if (!出た.some((y) => y.name === x.name)) 出た.push({ id: x.id, name: x.name });
+          }
+          if (出た.length) return 出た;
           for (const 列 of document.querySelectorAll(列の印)) {
             const 名 = 名前にする(列);
             if (名 && !出た.some((x) => x.name === 名)) 出た.push({ id: '', name: 名 });
@@ -485,6 +619,12 @@
 
       if (msg.type === 'project_id') {
         const 名 = String(msg.name || '');
+
+        const known = sidebarProjectRow(名);
+        if (known) {
+          send({ type: 'projectId', id: msg.id || null, ok: true, project: known.id, name: 名 });
+          return;
+        }
         const 拾う = () =>
           [...document.querySelectorAll('a[href]')]
             .map((a) => a.getAttribute('href') || '')
@@ -568,6 +708,8 @@
 
         const 探す = () => {
 
+          const created = document.querySelector('button[data-app-action-sidebar-project-create]');
+          if (created) return created;
           const 入口 = document.querySelector('[data-testid="sidebar-item-projects"]');
           const 直 = 入口 && 入口.querySelector('button[data-trailing-button]');
           if (直) return 直;
@@ -587,6 +729,7 @@
         if (!document.querySelector('[class*="sidebar-expando-section"]')) {
           const 開く = document.querySelector('[data-testid="open-sidebar-button"]');
           if (開く) 押す(開く);
+          else openSidebarIfClosed(押す);
         }
         待つ(() => !!探す(), 60, (在った) => {
         if (!在った) return void 終わり(false, 'sidebarClosed');
@@ -609,6 +752,7 @@
               const ボタン = [...(箱 ? 箱.querySelectorAll('button') : [])];
 
               const 作る =
+                ボタン.find((b) => b.type === 'submit') ||
                 ボタン.find((b) => /建立|创建|Create|作成/i.test((b.textContent || '').trim())) ||
                 ボタン[ボタン.length - 1];
               if (!作る) return void 終わり(false, 'noCreate');
@@ -658,9 +802,16 @@
             }) || null
           );
         };
-        const 列を探す = () => 旧い列() || 新しい列();
+        const redesignRow = () => {
+          const x = sidebarProjectRow(名);
+          return x ? x.row : null;
+        };
+        const 列を探す = () => redesignRow() || 旧い列() || 新しい列();
 
         const 選び所 = (列) => {
+          if (列.hasAttribute('data-app-action-sidebar-project-row')) {
+            return 列.querySelector('button[aria-haspopup="menu"]');
+          }
           const t = [...列.querySelectorAll('button[data-trailing-button]')];
           if (t.length) return t[t.length - 1];
           const b = [...列.querySelectorAll('button')];
@@ -668,12 +819,18 @@
         };
 
         let 移った = false;
+        let sidebarOpened = false;
         const 探し当てる = (残り, 続き2) => {
           if (列を探す()) return 続き2(true);
           if (!移った && !一覧の根() && 一覧の入口()) {
             移った = true;
             押す(一覧の入口());
             return void setTimeout(() => 探し当てる(残り, 続き2), 600);
+          }
+
+          if (!sidebarOpened) {
+            sidebarOpened = true;
+            openSidebarIfClosed(押す);
           }
           if (--残り <= 0) return 続き2(false);
           setTimeout(() => 探し当てる(残り, 続き2), 400);
@@ -715,6 +872,7 @@
                 if (!出た) return void 終わり(false, 'noDialog');
 
                 const 欄 =
+                  document.querySelector('[role="dialog"] textarea[name="project-instructions"]') ||
                   document.querySelector('[role="dialog"] textarea#instructions, dialog textarea#instructions') ||
                   [...document.querySelectorAll('[role="dialog"] textarea, dialog textarea')].pop();
                 if (!欄) return void 終わり(false, 'noField');
@@ -737,10 +895,10 @@
           const 閉じる =
             (箱 && 箱.querySelector('button[data-testid="close-button"]')) ||
             [...(箱 ? 箱.querySelectorAll('button') : [])].find((b) =>
-              /取消|取り消|キャンセル|Cancel|閉じる|Close/i.test((b.textContent || '').trim())
+              /取消|取り消|キャンセル|Cancel|閉じる|Close|\u95dc\u9589|\u5173\u95ed/i.test((b.textContent || '').trim())
             );
           if (閉じる) 押す(閉じる);
-          else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          else (箱 || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
           setTimeout(() => 終わり(true, '', 字), 600);
         });
         return;
@@ -797,13 +955,14 @@
             const ボタン = [...(箱 ? 箱.querySelectorAll('button') : [])];
 
             const 保存 =
+              ボタン.find((b) => b.type === 'submit') ||
               ボタン.find((b) =>
                 /儲存|保存|Save|更新|Update|完了/i.test((b.textContent || '').trim())
-              ) || ボタン[ボタン.length - 1];
+              ) || null;
             if (!保存) return void 終わり(false, 'noSave');
 
             const 名前欄 = 箱
-              ? 箱.querySelector('input[name="name"], input#name, input[type="text"]')
+              ? 箱.querySelector('input[name="project-name"], input[name="name"], input#name, input[type="text"]')
               : null;
             const いまの名 = 名前欄 ? String(名前欄.value || '').trim() : '';
             const 待ちの字 = /^(Loading|読み込み|\u8f09\u5165|\u52a0\u8f7d)/i;
@@ -873,9 +1032,10 @@
           url: location.href,
           composer: !!findComposer(),
 
-          conversations: Array.from(document.querySelectorAll('a[href^="/c/"]'))
+          conversations: Array.from(document.querySelectorAll('a[href*="/c/"]'))
             .map((a) => a.getAttribute('href'))
-            .filter(Boolean)
+            .filter((h) => /^\/(?:g\/g-p-[A-Za-z0-9-]+\/)?c\/[A-Za-z0-9-]+$/.test(h || ''))
+            .filter((h, i, all) => all.indexOf(h) === i)
             .slice(0, 20),
         });
         return;
@@ -922,6 +1082,12 @@
         });
         send({ type: 'submitted', id: msg.id, upload: up });
 
+        try {
+          chrome.runtime.sendMessage({ kind: 'sent', at: Date.now() }, () => void chrome.runtime.lastError);
+        } catch {
+
+        }
+
         aliveBeat(msg.id);
       } catch (err) {
 
@@ -959,6 +1125,7 @@
         turnBeatTimer = null;
         return;
       }
+
       send({ type: 'tabAlive', n, late });
     }, BEAT_MS);
   }
@@ -966,13 +1133,18 @@
   function aliveBeat(id) {
     if (beatTimer) clearInterval(beatTimer);
     let n = 0;
+
+    let sawButton = false;
     beatTimer = setInterval(() => {
       n += 1;
-      if (n > BEAT_MAX || !findStopButton()) {
+      const has = !!findStopButton();
+      if (has) sawButton = true;
+      if (n > BEAT_MAX || (sawButton && !has)) {
         clearInterval(beatTimer);
         beatTimer = null;
         return;
       }
+      if (!has) return;
       send({ type: 'busy', id, tool: 'writing' });
     }, BEAT_MS);
   }
@@ -1016,9 +1188,12 @@
     if (!stopSeenAt) stopSeenAt = now;
 
     if (isStuck() && b.disabled) {
-      throw new Error(
-        `${STUCK_UI_MARK}: 画面が固まっています（停止ボタンが押せない状態で残っています）`
-      );
+
+      if (!blockedRecently()) {
+        throw new Error(
+          `${STUCK_UI_MARK}: 画面が固まっています（停止ボタンが押せない状態で残っています）`
+        );
+      }
     }
     if (!isStuck()) {
 
@@ -1082,12 +1257,18 @@
     }
   }
 
+  function composerPrimaryButtons() {
+    const box = findComposer();
+    const form = box && box.closest('form');
+    if (!form) return [];
+    return [...form.querySelectorAll('button.size-token-button-composer, button.bg-composer-primary')];
+  }
+
   function findSendButton() {
-    return (
-      document.querySelector('[data-testid="send-button"]') ||
-      document.querySelector('button[aria-label*="Send"]') ||
-      document.querySelector('button[aria-label*="送信"]')
-    );
+    const byMark = document.querySelector('[data-testid="send-button"]');
+    if (byMark) return byMark;
+    const submits = composerPrimaryButtons().filter((b) => b.type === 'submit');
+    return submits.length === 1 ? submits[0] : null;
   }
 
   function sendable(b) {
@@ -1095,11 +1276,12 @@
   }
 
   function findStopButton() {
-    return (
-      document.querySelector('[data-testid="stop-button"]') ||
-      document.querySelector('button[aria-label*="Stop"]') ||
-      document.querySelector('button[aria-label*="停止"]')
+    const byMark = document.querySelector('[data-testid="stop-button"]');
+    if (byMark) return byMark;
+    const stops = composerPrimaryButtons().filter(
+      (b) => b.type === 'button' && !b.hasAttribute('data-state')
     );
+    return stops.length === 1 ? stops[0] : null;
   }
 
   function sleep(ms) {
@@ -1144,7 +1326,11 @@
   function chipLabels() {
 
     const out = [];
-    const 入れ物 = [...document.querySelectorAll('[role="group"][class*="file-tile"]')];
+    const 入れ物 = [
+      ...document.querySelectorAll(
+        '[role="group"][class*="file-tile"], [class*="group/composer-attachment"]'
+      ),
+    ];
     for (const t of 入れ物) {
       const words = [t.getAttribute('aria-label') || ''];
       for (const n of t.querySelectorAll('[aria-label]')) words.push(n.getAttribute('aria-label') || '');
@@ -1315,7 +1501,7 @@
       const had = composerLen();
 
       const userMessages = () =>
-        Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
+        Array.from(document.querySelectorAll(USER_MESSAGE_SELECTOR));
       const lastUserMessage = () => {
         const messages = userMessages();
         return messages.length ? messages[messages.length - 1] : null;
@@ -1403,6 +1589,88 @@
 
   let thinkingButtonMissingNoted = false;
 
+  const TYPE_MAX_CHARS = 400;
+
+  const TYPE_BASE_MIN_MS = 240;
+  const TYPE_BASE_SPREAD_MS = 380;
+  const TYPE_THINK_P = 0.12;
+  const TYPE_THINK_MIN_MS = 350;
+  const TYPE_THINK_SPREAD_MS = 1050;
+  const TYPE_REREAD_P = 0.025;
+  const TYPE_REREAD_MIN_MS = 1500;
+  const TYPE_REREAD_SPREAD_MS = 1700;
+
+  function putChunk(box, chunk) {
+    if (box.tagName === 'TEXTAREA') {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      ).set;
+      setter.call(box, box.value + chunk);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+
+    if (document.activeElement !== box) {
+      box.focus();
+      const range = document.createRange();
+      range.selectNodeContents(box);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    document.execCommand('insertText', false, chunk);
+  }
+
+  async function typeLikeHuman(box, text, opts) {
+    const replace = !opts || opts.replace !== false;
+    if (replace && text.length) {
+
+      if (box.tagName === 'TEXTAREA') {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype,
+          'value'
+        ).set;
+        setter.call(box, '');
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        const range = document.createRange();
+        range.selectNodeContents(box);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+    if (text.length > TYPE_MAX_CHARS) {
+
+      putChunk(box, text);
+      return;
+    }
+    let pos = 0;
+    while (pos < text.length) {
+
+      const size = Math.random() < 0.7 ? 1 + Math.floor(Math.random() * 3) : 4 + Math.floor(Math.random() * 3);
+      putChunk(box, text.slice(pos, pos + size));
+      pos += size;
+
+      if (!box.isConnected) {
+        const err = new Error('入力欄が打ちながら消えました（頁の組み直し？）');
+        err.code = 'composer-gone';
+        throw err;
+      }
+
+      let delay = TYPE_BASE_MIN_MS + Math.random() * TYPE_BASE_SPREAD_MS;
+      if (Math.random() < TYPE_THINK_P) {
+        delay += TYPE_THINK_MIN_MS + Math.random() * TYPE_THINK_SPREAD_MS;
+      } else if (Math.random() < TYPE_REREAD_P) {
+        delay += TYPE_REREAD_MIN_MS + Math.random() * TYPE_REREAD_SPREAD_MS;
+      }
+      await sleep(delay);
+    }
+  }
+
   async function submitPrompt(text, files, opts) {
 
     const box = await waitFor('入力欄', findComposer, 20000);
@@ -1438,29 +1706,15 @@
       const cover = opts.body
         ? `${opts.body}\n\n（この作業の決まりは、付けたファイルに入っています。先に読んでから、上の依頼をやってください。**前の作業の続きではありません。**）`
         : '付けたファイルに続きが入っています。読んで、そのまま作業を続けてください。';
-      document.execCommand('insertText', false, cover);
-      await sleep(300);
+      await typeLikeHuman(box, cover, { replace: false });
+
+      await sleep(800 + Math.random() * 2700);
 
       await pressSend('送信ボタン（ファイルの上げ終わり）', 180000, undefined, undefined, cover);
       return { uploaded: [], failed: [], asFile: true, chars: text.length };
     }
 
-    if (box.tagName === 'TEXTAREA') {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        'value'
-      ).set;
-      setter.call(box, text);
-      box.dispatchEvent(new Event('input', { bubbles: true }));
-    } else {
-
-      const range = document.createRange();
-      range.selectNodeContents(box);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      document.execCommand('insertText', false, text);
-    }
+    await typeLikeHuman(box, text);
 
     const grace = Math.max(
       STUCK_NO_DELTA_MS + 5000,
@@ -1476,6 +1730,8 @@
       },
       grace
     );
+
+    await sleep(800 + Math.random() * 2700);
 
     if (findStopButton()) {
       await waitFor(
@@ -1519,9 +1775,12 @@
       () => {
 
         if (isStuck() && findStopButton()) {
-          throw new Error(
-            `${STUCK_UI_MARK}: 画面が固まっています（送りを諦める所で気づきました）`
-          );
+
+          if (!blockedRecently()) {
+            throw new Error(
+              `${STUCK_UI_MARK}: 画面が固まっています（送りを諦める所で気づきました）`
+            );
+          }
         }
         const b = findSendButton();
         if (!b || sendable(b)) return null;
@@ -1543,7 +1802,7 @@
   let lastSeenThinking = '';
   const 吹き出しの数 = () => {
     try {
-      return document.querySelectorAll('[data-message-author-role]').length;
+      return document.querySelectorAll(ANY_MESSAGE_SELECTOR).length;
     } catch {
       return -1;
     }
@@ -1587,18 +1846,56 @@
       sawDeltaThisTurn = false;
       if (d.payload && d.payload.complete) lastDoneAt = Date.now();
     }
+
+    if (d.kind === 'error' && d.payload && d.payload.reason === 'unusualActivity') {
+      sawBlockAt = Date.now();
+    }
     send({ type: d.kind, ...d.payload });
   });
 
+  try {
+
+    chrome.runtime.onMessage.addListener((m, sender, reply) => {
+      if (!m || m.kind !== 'which_port') return false;
+
+      reply({ port: alive ? tryPort : (pinned || pinnedFallback || 0) });
+      return false;
+    });
+    chrome.runtime.onMessage.addListener((m) => {
+      if (!m || m.kind !== 'dial') return;
+      const 枠 = Number(m.port || 0);
+
+      const 呼ばれてよい = (枠 >= 8765 && 枠 <= 8779 && !SKIP.includes(枠)) || 枠 === 8799;
+      if (!呼ばれてよい) return;
+      if (tryPort === 枠 && alive) return;
+      console.log(`[bridge] 枠 ${枠} へ繋ぎ直します（エディターに呼ばれた）`);
+      tryPort = 枠;
+      pinned = 枠;
+      try {
+        sessionStorage.setItem(PORT_KEY, String(枠));
+      } catch {
+
+      }
+      try {
+        if (sock) sock.close();
+      } catch {
+
+      }
+      connect();
+    });
+  } catch {
+
+  }
+
   if (pinned || kept) {
-    connect();
+    identityReady.then(connect, connect);
   } else {
     let 始めた = false;
     const 始める = (p) => {
       if (始めた) return;
       始めた = true;
       if (p >= PORT_FROM && p <= PORT_TO && !SKIP.includes(p)) tryPort = p;
-      connect();
+      identityReady.then(connect, connect);
     };
 
     setTimeout(() => 始める(0), 400);

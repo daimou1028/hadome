@@ -2,16 +2,20 @@ const {
   buildInstruction,
   parseToolCalls,
   formatResults,
+  splitResults,
+  splitResultGroups,
   formatBrokenNotice,
   writeFileRecall,
 } = require('./protocol');
 const { trimForSend, SEND_LIMIT } = require('./toolong');
-const { reminderFor, withReminder } = require('./remind');
+const { reminderFor, withReminder, WEAKER, toolRoster } = require('./remind');
 const { profileFor, evidenceFor, shouldRestart } = require('./modelprofile');
 const { parseLimitNotice } = require('./limitnotice');
 const { noteUnknown } = require('./unknowntools');
+const lastmodel = require('./lastmodel');
 
 const { noteStreamCut } = require('./streamcuts');
+const { decideConversationChange } = require('./conversation-lifecycle');
 
 const 命令の頭 = /^(git|npm|node|npx|ls|cat|grep|find|sed|awk|rm|mv|cp|mkdir|python3?|uv|php|composer|curl|make|bash|sh)(\s|_|$)/i;
 function 命令に見える(名) {
@@ -191,15 +195,46 @@ const FIRST_MESSAGE_WARN_CHARS = 18000;
 
 const DEFAULT_MAX_FAILING = 3;
 
+const REFUSAL = new RegExp(
+  [
+
+    '接続されてい(ない|ません)|接続されておらず',
+    '(ツール|list_dir|read_file|write_file|search|run_command|tool_use|bridge_tool|呼び出し口|ファイル領域)[^。]{0,30}存在(せず|しなかった|しません|していません)',
+    '(使える|利用可能な)ツール[^。]{0,20}(ありません|ませ|無い|ない)',
+    '(ツール|呼び出し口)[^。]{0,20}公開されて(おらず|いない|いません)|利用可能な状態になってい(ない|ません)|ツールが(無|な)い|読めるファイルがない',
+
+    '(沒有|没有|無|无)(提供|連接|连接|接上|可用|可實際執行|可实际执行|可以使用|暴露)[^。]{0,60}(工具|介面|界面|接口|入口)',
+
+    '(工具|介面|界面|接口)[^。]{0,6}(中|裡|里)?(沒有|没有)[^。]{0,20}(write_file|read_file|done|tool_use)[^。]{0,15}(呼叫|调用)(入口|接口|介面)',
+
+    '(無法實際|无法实际)(讀取|执行|執行|读取|建立|创建)[^。，]{0,30}(工作區|工作区|檔案|文件|本機|本地|工具|介面|界面)',
+
+    "(don't|do not) have access to (your|the|any) (local )?(workspace|file ?system|files|tools)",
+    'no\\s+(local\\s+)?(workspace\\s+|file\\s+)?tools?\\s+(are\\s+|is\\s+)?(available|connected|exposed)',
+
+    'mnt\\/data|Library\\s*(搜尋|検索|search)',
+  ].join('|'),
+  'i'
+);
+
+const { openRunLog } = require('./runlog');
+
 async function runAgent(options) {
+
+  const 走りの記録 = openRunLog({ root: options && options.root });
   let ツール = null;
   let 結果 = null;
   try {
     結果 = await runAgentBody(options, (t) => {
       ツール = t;
-    });
+    }, 走りの記録);
+    走りの記録.result({ status: String((結果 && 結果.status) || 'done') });
     return 結果;
+  } catch (e) {
+    走りの記録.error({ message: String((e && e.message) || e) });
+    throw e;
   } finally {
+    走りの記録.close();
     if (ツール && typeof ツール.stopBackground === 'function') {
       try {
 
@@ -241,6 +276,10 @@ async function runAgentBody({
 
   restartGapMs = undefined,
 
+  maxSendsPerHour = 0,
+
+  onServerRefusal = null,
+
   mcp = null,
 
   mode = 'edit',
@@ -264,6 +303,10 @@ async function runAgentBody({
   onFailingStreak = null,
 
   onSilentStreak = null,
+
+  onStuck = null,
+
+  onRestart = null,
 
   onDowngrade = null,
 
@@ -341,6 +384,59 @@ async function runAgentBody({
   model = '',
   thinkingEffort = '',
 }, onTools) {
+  const runLog = arguments[2] || { tool() {}, send() {}, close() {} };
+
+  let 最後の結果 = null;
+  const 結果を組む = (rs) => {
+    最後の結果 = rs;
+    return formatResults(rs, 0);
+  };
+  const 殻を外す = (s) => s.replace(/^ツールの結果です。続けてください。\n\n/, '');
+
+  const 途中の見出し = (k) =>
+    `ツールの結果の続きがあります（${k} 通目）。` +
+    '**まだ何もしないで、「受け取りました」とだけ返してください。**ツールは呼ばないでください。' +
+    '次の通に続きが在ります。\n\n';
+  const 最後の見出し = (n) =>
+    `ツールの結果の最後の通です（全 ${n} 通）。これで全部です。` +
+    `前の ${n - 1} 通と合わせて読んでから、続けてください。\n\n`;
+
+  async function 分けて送る({ 頭, 組 }, 前置き, askOpts) {
+    const 列 = 組.slice();
+    for (let k = 0; k < 列.length; k += 1) {
+      const 最後 = k === 列.length - 1;
+      const 中身 = 殻を外す(formatResults(列[k].g, 0));
+      const 字 = 最後 ? 前置き + 頭 + 最後の見出し(列.length) + 中身 : 途中の見出し(k + 1) + 中身;
+      const 送り方 = { ...askOpts };
+      if (!最後) {
+
+        delete 送り方.asFile;
+        delete 送り方.body;
+        delete 送り方.files;
+        delete 送り方.onUpload;
+      }
+      try {
+        const 返 = await askWithServerGate(字, 送り方);
+        if (最後) return 返;
+        送った字 += 字.length;
+        const 返字 = String((返 && typeof 返 === 'object' ? 返.text : 返) || '');
+        onLog(`[agent] 結果の ${k + 1}/${列.length} 通目を送りました（返事 ${返字.length} 文字。中の呼び出しは実行しません）`);
+      } catch (e) {
+        if (!(e && e.tooLong)) throw e;
+        const 半分 = Math.floor(列[k].予算 / 2);
+        if (半分 < 3000) {
+          const 止め = new Error(`結果を ${列[k].予算} 字まで分けても「長すぎる」と断られました。中身を削らずに止めます`);
+          止め.cause = e;
+          throw 止め;
+        }
+        const 細 = splitResultGroups(列[k].g, 半分).map((g) => ({ g, 予算: 半分 }));
+        onLog(`[agent] 結果の ${k + 1}/${列.length} 通目が「長すぎる」と断られました。${半分} 字ごとに分け直して、同じ所から続けます`);
+        列.splice(k, 1, ...細);
+        k -= 1;
+      }
+    }
+    return null;
+  }
 
   const 背景の走り = [];
   let 背景の連番 = 0;
@@ -390,6 +486,8 @@ async function runAgentBody({
     denylist,
     protectSecrets,
     spawnAgents: spawnInBackground || spawnAgents,
+
+    disabled: disabledTools,
     readOnly,
     askPermission,
     onAllowAlways,
@@ -429,21 +527,144 @@ async function runAgentBody({
 
   let remindedDeadModel = false;
 
+  const 弱い決まりを試したモデル = new Set();
+
+  const 試した印 = () => modelSlug || '(不明)';
+
   let 送った字 = 0;
+
+  const sendTimes = [];
+  let serverRefusalStreak = 0;
+  let serverBackoffUntil = 0;
+  const SERVER_BACKOFF_CAP_MS = 30 * 60 * 1000;
+
+  const UNAVAILABLE_BACKOFF_BASE_MS = 60 * 1000;
+  const pruneSendTimes = (now) => {
+    while (sendTimes.length && now - sendTimes[0] >= 60 * 60 * 1000) sendTimes.shift();
+  };
+  const waitSendGate = async () => {
+    while (true) {
+      if (shouldStop()) return false;
+      const now = nowFn();
+      pruneSendTimes(now);
+      let waitMs = Math.max(0, serverBackoffUntil - now);
+      const cap = Number(maxSendsPerHour) || 0;
+
+      const peer = cap > 0 && bridge && typeof bridge.pluginSends === 'function' ? bridge.pluginSends() : null;
+      const peerFull = !!peer && peer.sends1h >= cap;
+      if (cap > 0 && (sendTimes.length >= cap || peerFull)) {
+        if (sendTimes.length >= cap) waitMs = Math.max(waitMs, sendTimes[0] + 60 * 60 * 1000 - now);
+
+        if (peerFull) waitMs = Math.max(waitMs, peer.oldestAt ? peer.oldestAt + 60 * 60 * 1000 - now : 60 * 1000);
+        if (!waitSendGate.loggedLimit) {
+          waitSendGate.loggedLimit = true;
+          onLog(
+            `[agent] 1 時間の送信上限 ${cap} 回に達したため待ちます` +
+              (peerFull && sendTimes.length < cap ? `（この帳から ${peer.sends1h} 回。別のエディターの分を含みます）` : '')
+          );
+        }
+      }
+      if (waitMs <= 0) {
+        waitSendGate.loggedLimit = false;
+        return true;
+      }
+      const step = Math.min(waitMs, 1000);
+      await new Promise((resolve) => setTimeout(resolve, step));
+    }
+  };
+  const serverBackoffMs = (e) => {
+
+    const retryAfterRaw = e && e.retryAfter;
+    if (retryAfterRaw != null && String(retryAfterRaw).trim() !== '') {
+      const retryAfter = Number(retryAfterRaw);
+      if (Number.isFinite(retryAfter) && retryAfter >= 0) return retryAfter * 1000;
+    }
+    const resetRaw = e && e.rateLimitReset;
+    if (resetRaw != null && String(resetRaw).trim() !== '') {
+      const reset = Number(resetRaw);
+      if (Number.isFinite(reset) && reset > 0) {
+
+        const epochMs = reset < 315360000 ? nowFn() + reset * 1000 : reset < 10000000000 ? reset * 1000 : reset;
+        if (reset < 315360000) return Math.max(0, epochMs - nowFn());
+        return Math.max(0, epochMs - nowFn());
+      }
+    }
+    if (String((e && e.reason) || '') === 'unavailable') {
+      return UNAVAILABLE_BACKOFF_BASE_MS * 2 ** Math.max(0, serverRefusalStreak - 1);
+    }
+    return 1000 * 2 ** Math.max(0, serverRefusalStreak);
+  };
+  const askWithServerGate = async (text, opts) => {
+    while (true) {
+      if (!(await waitSendGate())) {
+        const stopped = new Error('送信前に中断されました');
+        stopped.stopped = true;
+        throw stopped;
+      }
+      sendTimes.push(nowFn());
+      try {
+        runLog.send({ chars: String(text || '').length, part: String(opts && opts.part || '') });
+        const result = await bridge.ask(text, opts);
+        serverRefusalStreak = 0;
+        serverBackoffUntil = 0;
+        return result;
+      } catch (e) {
+        const retryableRefusal = e && e.refused && ['rateLimit', 'unavailable'].includes(String(e.reason || ''));
+        if (!retryableRefusal || e.delivered || e.tooLong || e.usageLimit) {
+          if (e && e.refused && !e.delivered && !e.tooLong && !e.usageLimit) {
+            e.serverBlocked = true;
+            if (typeof onServerRefusal === 'function') onServerRefusal(e);
+          }
+          throw e;
+        }
+        serverRefusalStreak += 1;
+        const rawWaitMs = serverBackoffMs(e);
+        const nextDelay = 1000 * 2 ** Math.max(0, serverRefusalStreak - 1);
+        const shouldStopForRefusal = rawWaitMs > SERVER_BACKOFF_CAP_MS || nextDelay >= SERVER_BACKOFF_CAP_MS;
+        const waitMs = Math.min(SERVER_BACKOFF_CAP_MS, rawWaitMs);
+        e.backoffMs = waitMs;
+        e.serverBlocked = shouldStopForRefusal;
+        if (typeof onNotice === 'function') onNotice({ kind: 'serverBackoff', status: e.status, reason: e.reason, waitMs });
+        if (shouldStopForRefusal) {
+          if (typeof onServerRefusal === 'function') onServerRefusal(e);
+          throw e;
+        }
+        serverBackoffUntil = Math.max(serverBackoffUntil, nowFn() + waitMs);
+        onLog(`[agent] 相手の拒否（${e.reason || e.status || 'unknown'}）に従い ${(waitMs / 1000).toFixed(1)} 秒待ちます`);
+      }
+    }
+  };
 
   let goalChecks = 0;
 
   let calledEver = 0;
 
+  let 対話で呼べた = 0;
+
+  const 呼べたモデル = new Set();
+  let 呼べると思い出させた = false;
+
   let modelSlug = '';
+
+  let 指した相手と違うと言った = false;
 
   try {
     if (process.env.BRIDGE_NO_LAST_MODEL === '1') throw new Error('検査では読まない');
-    const 印 = require('path').join(require('os').tmpdir(), 'panel-run-last-model.txt');
-    const 前 = require('fs').readFileSync(印, 'utf8').trim();
-    if (前) {
-      modelSlug = 前;
-      onLog(`[agent] 1 通目は前の走りの相手（${前}）で当てます`);
+
+    const pluginId = typeof bridge.pluginId === 'function' ? bridge.pluginId() : '';
+    if (pluginId) {
+      const 前 = lastmodel.read(pluginId);
+      if (前) {
+        modelSlug = 前;
+        onLog(`[agent] 1 通目は帳ごとに覚えた相手（${前}）で当てます`);
+      }
+    } else {
+      const 印 = require('path').join(require('os').tmpdir(), 'panel-run-last-model.txt');
+      const 前 = require('fs').readFileSync(印, 'utf8').trim();
+      if (前) {
+        modelSlug = 前;
+        onLog(`[agent] 1 通目は前の走りの相手（${前}）で当てます`);
+      }
     }
   } catch {
 
@@ -502,8 +723,19 @@ async function runAgentBody({
 
   let startSha = null;
 
-  const REFUSAL =
-    /接続されてい|存在(せず|しなかった|しません|していません)|(使える|利用可能な)ツール[^。]{0,20}(あり|ませ|無い|ない|接続)|(ツール|呼び出し口)[^。]{0,20}公開されて(おらず|いない|いません)|利用可能な(状態になってい|ファイル領域)|ツールが(無|な)い|読めるファイルがない|mnt\/data|Library\s*(搜尋|検索|search)/i;
+  const needsUserActionResult = (restarted, turns) => {
+    if (!restarted || !restarted.needsUserAction) return null;
+    return {
+      status: 'needs-user-action',
+      reason: `新しい対話へ移るには利用者の判断が必要です（${restarted.reason || 'recovery'}）`,
+      recoveryReason: restarted.reason || '',
+      choice: restarted.choice || 'none',
+      allAnswers: allProse(history),
+      startSha,
+      turns,
+      history,
+    };
+  };
 
   const POLICY = /コンテンツポリシー|content\s*polic(y|ies)|usage\s*polic(y|ies)に違反/i;
 
@@ -536,23 +768,60 @@ const TURN_PACE_MIN_MS = Number(process.env.BRIDGE_TURN_PACE_MIN ?? 2000);
 const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
 
   const RESTART_GAP_MS = Number.isFinite(Number(restartGapMs)) ? Math.max(0, Number(restartGapMs)) : 20000;
-  let lastRestartAt = 0;
 
-  async function remakeConversation() {
-    const since = lastRestartAt ? Date.now() - lastRestartAt : Infinity;
+  async function remakeConversation(reason = 'recovery-no-tool', { count = true } = {}) {
 
-    const 揺れ = Math.floor(Math.random() * Math.max(1, Math.round(RESTART_GAP_MS * 0.4)));
-    const 目安 = RESTART_GAP_MS + 揺れ;
-    if (since < 目安) {
-      const wait = 目安 - since;
-      onLog(`[agent] 対話を続けて作らないよう ${Math.round(wait / 1000)} 秒あけます`);
-      if (onNotice) onNotice({ kind: 'pace', ms: wait });
-      await new Promise((r) => setTimeout(r, wait));
+    if (declinedRestartReasons.has(reason)) return { ok: false, action: 'keep', reason };
+    let choice = '';
+    if (onRestart) {
+      try {
+        choice = String((await onRestart({ why: reason, n: restarts + 1, max: MAX_RESTARTS })) || '');
+      } catch (e) {
+        onLog(`[agent] 対話を引き直すか聞けませんでした（${e.message}）。停止します`);
+        choice = 'stop';
+      }
+    } else {
+      choice = 'stop';
     }
-    lastRestartAt = Date.now();
+    const decision = decideConversationChange({ reason, mode, choice });
+    if (decision.action !== 'create') {
+      if (decision.action === 'keep') declinedRestartReasons.add(reason);
+      onLog(`[agent] 対話は引き直しません（reason=${reason}, choice=${choice || 'none'}, action=${decision.action}）`);
+      return {
+        ok: false,
+        action: decision.action,
+        reason,
+        choice: choice || 'none',
+        needsUserAction: decision.action === 'stop',
+      };
+    }
+
+    const before = {
+      conversationId: typeof bridge.conversationId === 'function' ? String(bridge.conversationId() || '') : '',
+      url: typeof bridge.conversationUrl === 'function' ? String(bridge.conversationUrl() || '') : '',
+      projectUrl: typeof bridge.projectUrl === 'function' ? String(bridge.projectUrl() || '') : '',
+      at: Date.now(),
+    };
+
+    if (count) {
+      restarts += 1;
+      onLog(`[agent] 新しい対話でやり直します（${restartLabel()}・${reason}）`);
+      if (onNotice) onNotice({ kind: 'restart', why: reason, n: restarts, max: MAX_RESTARTS });
+    }
 
     remindedDeadModel = false;
-    return bridge.newConversation();
+    対話で呼べた = 0;
+    呼べると思い出させた = false;
+
+    await bridge.newConversation(undefined, { reason, actor: 'agent-recovery', gapMs: RESTART_GAP_MS });
+    const after = {
+      conversationId: typeof bridge.conversationId === 'function' ? String(bridge.conversationId() || '') : '',
+      url: typeof bridge.conversationUrl === 'function' ? String(bridge.conversationUrl() || '') : '',
+      projectUrl: typeof bridge.projectUrl === 'function' ? String(bridge.projectUrl() || '') : '',
+      at: Date.now(),
+    };
+    onLog(`[agent] 対話ライフサイクル ${JSON.stringify({ reason, choice, before, after })}`);
+    return { ok: true, action: 'create', reason, choice, before, after };
   }
 
   async function readLimitNotice() {
@@ -590,6 +859,8 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
 
   const MAX_RESTARTS = 2;
   let restarts = 0;
+
+  const declinedRestartReasons = new Set();
   const canRestart = () => restarts < MAX_RESTARTS;
   const restartLabel = () => `${restarts}/${MAX_RESTARTS} 回目`;
   let firstMessage = '';
@@ -642,25 +913,24 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         `[agent] 相手が求めた ${p}${range ? ` の ${range[1]}〜${range[2]} 行` : ''} を ${how} で渡します` +
           `（${handedOver}/${HAND_OVER_MAX}）`
       );
-      return formatResults([{ id: null, ok: true, output: out, tool: how, target: p }], SEND_LIMIT);
+      return 結果を組む([{ id: null, ok: true, output: out, tool: how, target: p }]);
     }
     return null;
   }
 
-  async function restartIfRefused(said) {
-    if (!canRestart() || !firstMessage || !bridge.newConversation) return '';
-    if (!REFUSAL.test(String(said || ''))) return '';
-    restarts += 1;
-    onLog(`[agent] 相手が「その道具は無い」と言って終わろうとしました。対話を引き直します（${restartLabel()}）`);
-    if (onNotice)
-      onNotice({ kind: 'restart', why: 'noTool', n: restarts, max: MAX_RESTARTS });
+  async function restartIfRefused(said, turns) {
+    if (!canRestart() || !firstMessage || !bridge.newConversation) return null;
+    if (!REFUSAL.test(String(said || ''))) return null;
     try {
-      await remakeConversation();
+      const restarted = await remakeConversation('recovery-no-tool');
+      const stopped = needsUserActionResult(restarted, turns);
+      if (stopped) return { result: stopped };
+      if (!restarted.ok) return null;
 
-      return firstMessage;
+      return { message: firstMessage };
     } catch (e) {
       onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま返します`);
-      return '';
+      return null;
     }
   }
   let message;
@@ -803,6 +1073,23 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       }
     }
 
+    let 分け送り = null;
+    {
+      const 元 = 最後の結果 ? formatResults(最後の結果, 0) : '';
+      if (元 && message.endsWith(元) && trimForSend(message).trimmed) {
+        const 頭 = message.slice(0, message.length - 元.length);
+
+        const 予算 = SEND_LIMIT - 頭.length - 1500;
+
+        const 組 = 予算 >= 4000 ? splitResultGroups(最後の結果, 予算) : [];
+        if (予算 < 4000) onLog(`[agent] 前置きが長く（${頭.length} 文字）、結果を分ける余地が無いので、分けずに送ります（長ければ添付に成ります）`);
+        if (組.length > 1) {
+          分け送り = { 頭, 組: 組.map((g) => ({ g, 予算 })) };
+          message = 頭 + 最後の見出し(組.length) + 殻を外す(formatResults(組[組.length - 1], 0));
+          onLog(`[agent] ツールの結果（${頭.length + 元.length} 文字）を ${組.length} 通 に分けて本文で送ります（添付にすると相手は全部を読まない）`);
+        }
+      }
+    }
     let asFile = false;
 
     let sendText = message;
@@ -832,6 +1119,12 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     askOpts.onModel = (slug) => {
       const name = String(slug || '');
       if (name) {
+
+        if (model && name !== model && !指した相手と違うと言った) {
+          指した相手と違うと言った = true;
+          onLog(`[agent] **指したのは ${model} ですが、答えているのは ${name} です**（相手の側で替えられています）`);
+          if (onNotice) onNotice({ kind: 'modelNotHonored', want: model, got: name });
+        }
         if (modelSlug && modelSlug !== name) {
 
           if (shouldRestart(modelSlug, name)) {
@@ -847,6 +1140,9 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
           }
         }
         modelSlug = name;
+
+        const accountId = typeof bridge.pluginId === 'function' ? bridge.pluginId() : '';
+        if (accountId) lastmodel.write(accountId, name);
       }
       if (onModel) onModel(slug);
     };
@@ -862,6 +1158,12 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         sendText = 分け.file;
         askOpts.body = 分け.body;
         onLog(`[agent] 依頼（${分け.body.length} 文字）は入力欄に残し、決まり（${分け.file.length} 文字）だけファイルにします`);
+      } else if (最後の結果 && message.endsWith(formatResults(最後の結果, 0))) {
+
+        askOpts.body =
+          'ツールの結果は添付のファイルに在ります（長いので添付にしました。削っていません）。' +
+          '**全部を読んでから**続けてください。';
+        onLog(`[agent] ツールの結果（${message.length} 文字）を削らずに添付で送ります`);
       } else if (turn === 1) {
         askOpts.body = LONG_TASK_BODY;
         onLog(`[agent] 依頼（${message.length} 文字）が長いので全部をファイルにし、入力欄には依頼がファイルに在る事だけを書きます`);
@@ -907,7 +1209,9 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     送った字 += sendText.length;
     let answer;
     try {
-      answer = await bridge.ask(sendText, askOpts);
+      answer = 分け送り
+        ? await 分けて送る(分け送り, sendText.endsWith(message) ? sendText.slice(0, sendText.length - message.length) : '', askOpts)
+        : await askWithServerGate(sendText, askOpts);
     } catch (e) {
 
       if (e && e.stopped) {
@@ -915,14 +1219,23 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       }
 
       if (e && e.tooLong) {
-        const half = trimForSend(message, Math.floor(message.length / 2));
-        onLog(`[agent] 長すぎると断られました。${half.cut} 文字を省いて 1 度だけ送り直します`);
-        message = half.text;
+        const 元 = 最後の結果 ? formatResults(最後の結果, 0) : '';
+        if (元 && message.endsWith(元)) {
+
+          const 頭 = message.slice(0, message.length - 元.length);
+          const 半分 = 頭 + formatResults(最後の結果, Math.max(2000, Math.floor(message.length / 2) - 頭.length));
+          onLog(`[agent] 長すぎると断られました。結果を 1 件ずつ削って（${message.length} → ${半分.length} 文字）1 度だけ送り直します`);
+          message = 半分;
+        } else {
+          const half = trimForSend(message, Math.floor(message.length / 2));
+          onLog(`[agent] 長すぎると断られました。${half.cut} 文字を省いて 1 度だけ送り直します`);
+          message = half.text;
+        }
 
         sendText = message;
         delete askOpts.body;
         askOpts.asFile = false;
-        answer = await bridge.ask(sendText, askOpts);
+        answer = await askWithServerGate(sendText, askOpts);
       } else {
         if (!e || !e.transient) {
 
@@ -933,11 +1246,15 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
             );
             if (onNotice) onNotice({ kind: 'delivered', why: String(e.message || '') });
           }
+          if (e && e.usageLimit && onNotice) onNotice({ kind: 'usageLimit', model: String(askOpts.model || '') });
+
+          else if (e && onNotice && ['rateLimit', 'unusualActivity', 'unavailable'].includes(e.reason))
+            onNotice({ kind: 'refused', reason: e.reason, status: Number(e.status) || 0 });
           throw e;
         }
         onLog(`[agent] 送れませんでした（${e.message}）。1 度だけ送り直します`);
         if (onNotice) onNotice({ kind: 'resend', why: String(e.message || '') });
-        answer = await bridge.ask(sendText, askOpts);
+        answer = await askWithServerGate(sendText, askOpts);
       }
     }
     const waited = Date.now() - t0;
@@ -966,6 +1283,8 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     const { calls, broken } = parseToolCalls(answer);
     if (broken.length === 0) brokenRow = 0;
     calledEver += calls.length;
+    対話で呼べた += calls.length;
+    if (calls.length && modelSlug) 呼べたモデル.add(modelSlug);
 
     if (profileFor(modelSlug) === 'dead' && !downgradeDecided) {
       downgradeDecided = true;
@@ -1022,16 +1341,21 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         }
         if (firstMessage && bridge.newConversation) {
           try {
-            await remakeConversation();
-            downgraded = false;
-            modelSlug = '';
-            silent = 0;
-            firstSilentAnswer = '';
-            downgradeDecided = false;
-            message = firstMessage;
-            onLog('[agent] 待ち終えたので、新しい対話で 1 通目から続けます');
-            if (onNotice) onNotice({ kind: 'resumed', n: waitsForStrong, max: MAX_WAITS });
-            continue;
+
+            const restarted = await remakeConversation('recovery-downgraded', { count: false });
+            const stopped = needsUserActionResult(restarted, turn);
+            if (stopped) return stopped;
+            if (restarted && restarted.ok) {
+              downgraded = false;
+              modelSlug = '';
+              silent = 0;
+              firstSilentAnswer = '';
+              downgradeDecided = false;
+              message = firstMessage;
+              onLog('[agent] 待ち終え、新しい対話で 1 通目から続けます');
+              if (onNotice) onNotice({ kind: 'resumed', n: waitsForStrong, max: MAX_WAITS });
+              continue;
+            }
           } catch (e) {
             onLog(`[agent] 待った後に引き直せませんでした（${e.message}）。そのまま続けます`);
           }
@@ -1041,20 +1365,20 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
     }
 
     if (downgraded && calledEver === 0 && canRestart() && firstMessage && bridge.newConversation) {
-      restarts += 1;
-      onLog(`[agent] 相手が入れ替わったので、対話を引き直します（${restartLabel()}）`);
-      if (onNotice)
-        onNotice({ kind: 'restart', why: 'downgraded', n: restarts, max: MAX_RESTARTS });
       try {
-        await remakeConversation();
-        downgraded = false;
-        modelSlug = '';
+        const restarted = await remakeConversation('recovery-downgraded');
+        const stopped = needsUserActionResult(restarted, turn);
+        if (stopped) return stopped;
+        if (restarted && restarted.ok) {
+          downgraded = false;
+          modelSlug = '';
 
-        silent = 0;
+          silent = 0;
 
-        firstSilentAnswer = '';
-        message = firstMessage;
-        continue;
+          firstSilentAnswer = '';
+          message = firstMessage;
+          continue;
+        }
       } catch (e) {
         onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま続けます`);
       }
@@ -1072,23 +1396,37 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         if (brokenRow > MAX_BROKEN_ROW) {
 
           if (canRestart() && firstMessage && bridge.newConversation) {
-            restarts += 1;
-            onLog(`[agent] 読めない形が続いたので、対話を引き直します（${restartLabel()}）`);
-            if (onNotice)
-              onNotice({ kind: 'restart', why: 'badFormat', n: restarts, max: MAX_RESTARTS });
             try {
-              await remakeConversation();
-              brokenRow = 0;
-              message = firstMessage;
-              continue;
+              const restarted = await remakeConversation('recovery-bad-format');
+              const stopped = needsUserActionResult(restarted, turn);
+              if (stopped) return stopped;
+              if (restarted && restarted.ok) {
+                brokenRow = 0;
+                message = firstMessage;
+                continue;
+              }
             } catch (e) {
               onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま止めます`);
+            }
+          }
+          const why = `道具の書き方が ${brokenRow} 回続けて読めませんでした`;
+          if (onStuck) {
+            const hint = await onStuck({ kind: 'badFormat', times: brokenRow, why });
+            if (hint) {
+              brokenRow = 0;
+              onLog('[agent] 読めない書式の数を戻して続けます');
+              message =
+                formatBrokenNotice(broken) +
+                (typeof hint === 'string' && hint.trim() && hint.trim() !== 'go'
+                  ? '\n\n利用者からの指点:\n' + hint.trim()
+                  : '');
+              continue;
             }
           }
           onLog(`[agent] コードブロックが読めないターンが ${brokenRow} 回続きました。止めます`);
           return {
             status: 'stopped',
-            reason: `道具の書き方が ${brokenRow} 回続けて読めませんでした`,
+            reason: why,
             answer: allProse(history),
             startSha,
             turns: turn,
@@ -1113,40 +1451,76 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       }
 
       if (
+      !弱い決まりを試したモデル.has(試した印()) &&
+      WEAKER &&
+
+      (modelSlug ? !呼べたモデル.has(modelSlug) : 対話で呼べた === 0) &&
+      canRestart() &&
+      bridge.newConversation &&
+      REFUSAL.test(proseOf(answer, false))
+      ) {
+        弱い決まりを試したモデル.add(試した印());
+
+        const 当たり = (proseOf(answer, false).match(REFUSAL) || [''])[0];
+        onLog(`[agent] 呼ばないので、弱い相手向けの決まりを 1 度だけ渡します（${modelSlug || '相手 不明'}。引き直す前に）← 当たった字「${当たり}」`);
+        if (onNotice) onNotice({ kind: 'weakerPrompt', model: modelSlug || '' });
+        silent = 0;
+        firstSilentAnswer = '';
+        message = WEAKER;
+        continue;
+      }
+
+      if (対話で呼べた > 0 && !呼べると思い出させた && REFUSAL.test(proseOf(answer, false))) {
+        呼べると思い出させた = true;
+        const 当たり = (proseOf(answer, false).match(REFUSAL) || [''])[0];
+        onLog(`[agent] 「ツールが無い」と言いましたが、この対話で既に ${対話で呼べた} 回 呼べています。引き直さず、呼べる事を思い出させます ← 当たった字「${当たり}」`);
+        if (onNotice) onNotice({ kind: 'remindTools', n: 対話で呼べた });
+        const 名 = [...Object.keys(tools), 'ask_user', 'done'];
+        message =
+          `あなたはこの対話で既にツールを ${対話で呼べた} 回 呼び、結果を受け取っています。**ツールは使えます。**\n` +
+          '前の通が長く、最初の決まりが見えにくく成っているかもしれません。呼び方はこれまでと同じです。\n\n' +
+          toolRoster(名) +
+          '\n\n止まった所から続けてください。';
+        silent = 0;
+        continue;
+      }
+      if (
         canRestart() &&
         silent === 0 &&
         bridge.newConversation &&
         includeInstruction &&
         REFUSAL.test(proseOf(answer, false))
       ) {
-        restarts += 1;
-        onLog(`[agent] 相手が「その道具は無い」と言って止まりました。対話を引き直します（${restartLabel()}）`);
-        if (onNotice)
-          onNotice({ kind: 'restart', why: 'noTool', n: restarts, max: MAX_RESTARTS });
+        const 当たり = (proseOf(answer, false).match(REFUSAL) || [''])[0];
+        onLog(`[agent] 相手が「その道具は無い」と言って止まりました ← 当たった字「${当たり}」`);
         try {
-          await remakeConversation();
+          const restarted = await remakeConversation('recovery-no-tool');
+          const stopped = needsUserActionResult(restarted, turn);
+          if (stopped) return stopped;
+          if (restarted && restarted.ok) {
 
-          message = firstMessage;
-          continue;
+            message = firstMessage;
+            continue;
+          }
         } catch (e) {
           onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま続けます`);
         }
       }
 
       if (downgraded && canRestart() && firstMessage && bridge.newConversation) {
-        restarts += 1;
-        onLog(`[agent] 弱い相手に変わってから呼ばなくなったので、対話を引き直します（${restartLabel()}）`);
-        if (onNotice)
-          onNotice({ kind: 'restart', why: 'downgraded', n: restarts, max: MAX_RESTARTS });
         try {
-          await remakeConversation();
+          const restarted = await remakeConversation('recovery-downgraded');
+          const stopped = needsUserActionResult(restarted, turn);
+          if (stopped) return stopped;
+          if (restarted && restarted.ok) {
 
-          downgraded = false;
-          modelSlug = '';
-          silent = 0;
-          firstSilentAnswer = '';
-          message = firstMessage;
-          continue;
+            downgraded = false;
+            modelSlug = '';
+            silent = 0;
+            firstSilentAnswer = '';
+            message = firstMessage;
+            continue;
+          }
         } catch (e) {
           onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま続けます`);
         }
@@ -1195,16 +1569,16 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
           continue;
         }
         if (canRestart() && firstMessage && bridge.newConversation && (worked || refused)) {
-          restarts += 1;
-          onLog(`[agent] 道具を呼ばないまま終わりかけたので、対話を引き直します（${restartLabel()}）`);
-          if (onNotice)
-            onNotice({ kind: 'restart', why: 'noCall', n: restarts, max: MAX_RESTARTS });
           try {
-            await remakeConversation();
-            silent = 0;
-            firstSilentAnswer = '';
-            message = firstMessage;
-            continue;
+            const restarted = await remakeConversation('recovery-no-call');
+            const stopped = needsUserActionResult(restarted, turn);
+            if (stopped) return stopped;
+            if (restarted && restarted.ok) {
+              silent = 0;
+              firstSilentAnswer = '';
+              message = firstMessage;
+              continue;
+            }
           } catch (e) {
             onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま返します`);
           }
@@ -1215,6 +1589,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
             `ツールを呼ばないターンが ${silent} 回続きました。\n` +
             `最後の返答: ${String(firstSilentAnswer || answer).split('\n')[0].slice(0, 200)}`;
           const hint = await onSilentStreak({ times: silent, why, answer, calledEver });
+          const continueWithoutHint = !!(hint && typeof hint === 'object' && hint.continue === true);
           if (hint) {
             silent = 0;
             firstSilentAnswer = '';
@@ -1222,7 +1597,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
 
             message =
               silentNudge() +
-              (typeof hint === 'string' && hint.trim()
+              (!continueWithoutHint && typeof hint === 'string' && hint.trim()
                 ? '\n\n利用者からの指点:\n' + hint.trim()
                 : '');
             continue;
@@ -1272,7 +1647,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         };
         onLog('[agent] update_todos → 直した記録が無いのに「終わった」にしているので差し戻します');
         onTool(back);
-        message = formatResults([back], SEND_LIMIT);
+        message = 結果を組む([back]);
         continue;
       }
     }
@@ -1307,7 +1682,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       onLog('[agent] ask_user → 許しを求めているので、そのまま出させます');
       onTool(back);
 
-      message = formatResults([back], SEND_LIMIT);
+      message = 結果を組む([back]);
       continue;
     }
 
@@ -1339,7 +1714,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       };
       onLog('[agent] ask_user → 選択肢を文で並べているので、options を付けて出し直させます');
       onTool(back);
-      message = formatResults([back], SEND_LIMIT);
+      message = 結果を組む([back]);
       continue;
     }
 
@@ -1350,9 +1725,10 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         message = gave;
         continue;
       }
-      const r = await restartIfRefused(askCall.question || '');
-      if (r) {
-        message = r;
+      const restart = await restartIfRefused(askCall.question || '', turn);
+      if (restart && restart.result) return restart.result;
+      if (restart && restart.message) {
+        message = restart.message;
         continue;
       }
       return {
@@ -1510,24 +1886,44 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       if (print === lastCall) {
         sameCallRow += 1;
         if (sameCallRow >= MAX_SAME_CALL) {
-          onLog(`[agent] 同じ呼び出しが ${sameCallRow + 1} 回続きました。止めます`);
+          const n = sameCallRow + 1;
+          const why =
+            `同じ道具を同じ引数で ${n} 回続けて呼びました（${call.bridge_tool}）。` +
+            '進んでいない可能性があります。';
           if (onNotice) {
             onNotice({
               kind: 'sameCall',
               tool: call.bridge_tool,
-              n: sameCallRow + 1,
+              n,
             });
           }
-          return {
-            status: 'stopped',
-            reason:
-              `同じ道具を同じ引数で ${sameCallRow + 1} 回続けて呼びました（${call.bridge_tool}）。` +
-              '進んでいないので止めます。',
-            answer: allProse(history),
-            startSha,
-            turns: turn,
-            history,
-          };
+          if (onStuck) {
+            const hint = await onStuck({ kind: 'sameCall', times: n, why, tool: call.bridge_tool });
+            if (hint) {
+              sameCallRow = 0;
+              onLog('[agent] 同じ呼び出しの数を戻して続けます');
+            } else {
+              onLog(`[agent] 同じ呼び出しが ${n} 回続いたため、利用者の選択で止めます`);
+              return {
+                status: 'stopped',
+                reason: why,
+                answer: allProse(history),
+                startSha,
+                turns: turn,
+                history,
+              };
+            }
+          } else {
+            onLog(`[agent] 同じ呼び出しが ${n} 回続きました。止めます`);
+            return {
+              status: 'stopped',
+              reason: why,
+              answer: allProse(history),
+              startSha,
+              turns: turn,
+              history,
+            };
+          }
         }
       } else {
         lastCall = print;
@@ -1650,9 +2046,24 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
           済み.n += 1;
           済み.名[call.bridge_tool] = (済み.名[call.bridge_tool] || 0) + 1;
         }
+        runLog.tool({
+          tool: call.bridge_tool,
+          path: String(call.path || ''),
+          ok: !!withHint.ok,
+          chars: String(withHint.output || '').length,
+
+          ...(call.command ? { command: String(call.command).slice(0, 200) } : {}),
+        });
         onTool({ id: call.id, tool: call.bridge_tool, ms: tookMs, ...withHint });
         results.push({ id: call.id, tool: call.bridge_tool, ...withHint });
       } catch (e) {
+        runLog.tool({
+          tool: call.bridge_tool,
+          path: String(call.path || ''),
+          ok: false,
+          chars: String(e.message || '').length,
+          ...(call.command ? { command: String(call.command).slice(0, 200) } : {}),
+        });
         onLog(`[agent] ${call.bridge_tool} → 失敗: ${e.message}`);
         const failed = {
           id: call.id,
@@ -1688,7 +2099,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         onLog(`[agent] done → 手順書 ${unread.join(' / ')} を読ませます`);
         onTool(back);
         results.push(back);
-        message = formatResults(results, SEND_LIMIT);
+        message = 結果を組む(results);
         continue;
       }
     }
@@ -1712,7 +2123,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         };
         onTool(back);
         results.push(back);
-        message = formatResults(results, SEND_LIMIT);
+        message = 結果を組む(results);
         continue;
       }
     }
@@ -1745,7 +2156,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
           };
           onTool(refused);
           results.push(refused);
-          message = formatResults(results, SEND_LIMIT);
+          message = 結果を組む(results);
         };
         if (todoRefusals < MAX_TODO_REFUSALS) {
           todoRefusals += 1;
@@ -1787,7 +2198,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       };
       onTool(refused);
       results.push(refused);
-      message = formatResults(results, SEND_LIMIT);
+      message = 結果を組む(results);
       continue;
     }
 
@@ -1797,14 +2208,14 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         doneRefusals += 1;
 
         if (doneRefusals >= 2 && canRestart() && firstMessage && bridge.newConversation) {
-          restarts += 1;
-          onLog(`[agent] 断っても作らないので、対話を引き直します（${restartLabel()}）`);
-          if (onNotice)
-            onNotice({ kind: 'restart', why: 'refusedTwice', n: restarts, max: MAX_RESTARTS });
           try {
-            await remakeConversation();
-            message = firstMessage;
-            continue;
+            const restarted = await remakeConversation('recovery-no-tool');
+            const stopped = needsUserActionResult(restarted, turn);
+            if (stopped) return stopped;
+            if (restarted && restarted.ok) {
+              message = firstMessage;
+              continue;
+            }
           } catch (e) {
             onLog(`[agent] 引き直せませんでした（${e.message}）。そのまま断ります`);
           }
@@ -1828,7 +2239,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         onLog(`[agent] done → まだ作っていない（${doneRefusals}/${MAX_THIN_REFUSALS} 回目）`);
         onTool(refused);
         results.push(refused);
-        message = formatResults(results, SEND_LIMIT);
+        message = 結果を組む(results);
         continue;
       }
     }
@@ -1860,16 +2271,17 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
         onLog(`[agent] done → ${target} が薄い（${thinRefusals}/${MAX_THIN_REFUSALS} 回目）`);
         onTool(back);
         results.push(back);
-        message = formatResults(results, SEND_LIMIT);
+        message = 結果を組む(results);
         continue;
       }
     }
 
     if (doneCall) {
 
-      const r = await restartIfRefused(doneCall.summary || '');
-      if (r) {
-        message = r;
+      const restart = await restartIfRefused(doneCall.summary || '', turn);
+      if (restart && restart.result) return restart.result;
+      if (restart && restart.message) {
+        message = restart.message;
         continue;
       }
 
@@ -1911,7 +2323,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
             failing = 0;
             onLog('[agent] 失敗続きの数を戻して続けます');
             message =
-              formatResults(results, SEND_LIMIT) +
+              結果を組む(results) +
               (typeof hint === 'string' && hint.trim()
                 ? '\n\n利用者からの指点:\n' + hint.trim()
                 : '');
@@ -1931,7 +2343,7 @@ const TURN_PACE_MAX_MS = Number(process.env.BRIDGE_TURN_PACE_MAX ?? 11000);
       }
     }
 
-    message = formatResults(results, SEND_LIMIT);
+    message = 結果を組む(results);
   }
 
   return {
@@ -1960,6 +2372,8 @@ function splitForFile(msg) {
 
 module.exports = {
   runAgent,
+
+  REFUSAL,
 
   命令に見える,
 

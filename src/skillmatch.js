@@ -9,7 +9,8 @@ const HINTS = [
   {
 
     skill: 'research',
-    when: /調查|調査|しらべ|調べ|research|出典|來源|来源|source|(?<![A-Za-z])urls?(?![A-Za-z])|論文|学術|學術|benchmark|事例/i,
+
+    when: /調查|調査|しらべ|調べ|research|出典|來源|来源|source|論文|学術|學術|benchmark|事例/i,
     why: '出典を押さえて調べるため',
   },
   {
@@ -23,6 +24,13 @@ const HINTS = [
     why: '文書を組み立てるため',
   },
 ];
+
+function isNegatedHintMatch(text, pattern) {
+  const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g';
+  const all = [...text.matchAll(new RegExp(pattern.source, flags))];
+  if (!all.length) return false;
+  return all.every((m) => /^(?:ずに|ないで|なくて|ません)/.test(text.slice(m.index + m[0].length, m.index + m[0].length + 8)));
+}
 
 function matchSkills(task, index, limit = 3) {
   const t = String(task == null ? '' : task);
@@ -42,19 +50,38 @@ function matchSkills(task, index, limit = 3) {
     if (name.length < 3) continue;
     const at = new RegExp('(^|[^A-Za-z0-9_-])' + name.replace(/[-]/g, '\\-') + '($|[^A-Za-z0-9_-])', 'i');
     if (!at.test(t)) continue;
+
+    if (/^[a-z]+$/.test(name) && !pointsToSkill(t, name)) continue;
     if (out.some((x) => x.skill === name)) continue;
     out.push({ skill: name, why: '依頼にこの名前が出てくるため' });
   }
 
+  const prose = t.replace(/`[^`\n]*`/g, ' ');
   for (const h of HINTS) {
     if (out.length >= limit) break;
-    if (!h.when.test(t)) continue;
+    if (!h.when.test(prose)) continue;
+    if (isNegatedHintMatch(prose, h.when)) continue;
 
     if (!inIndex(h.skill)) continue;
     if (out.some((x) => x.skill === h.skill)) continue;
     out.push({ skill: h.skill, why: h.why });
   }
   return out;
+}
+
+const PROPER_NAMES = new Set([
+
+  'backlog',
+]);
+function pointsToSkill(task, name) {
+  const esc = name.replace(/[-]/g, '\\-');
+  if (new RegExp('[./]' + esc + '\\.[a-z]{2,}', 'i').test(task)) return true;
+  const proper = name.charAt(0).toUpperCase() + name.slice(1);
+  if (PROPER_NAMES.has(name) && new RegExp('(^|[^A-Za-z0-9_-])' + proper + '($|[^A-Za-z0-9_-])').test(task)) return true;
+  const marker = new RegExp('(?:^|[^A-Za-z])skills?(?:$|[^A-Za-z])|手順書|read_skill|/' + esc + '(?:$|[^A-Za-z0-9_-])|`' + esc + '`', 'i');
+  return task
+    .split(/[。\n]|\.\s/)
+    .some((s) => new RegExp('(^|[^A-Za-z0-9_-])' + esc + '($|[^A-Za-z0-9_-])', 'i').test(s) && marker.test(s));
 }
 
 function skillDirective(hits) {

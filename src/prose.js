@@ -27,6 +27,28 @@ function startsBareCall(line) {
   return t.includes('tool_use') || t.includes('bridge_tool');
 }
 
+function gluedCallIndex(line) {
+  const s = String(line == null ? '' : line);
+  for (let i = s.indexOf('{'); i > 0; i = s.indexOf('{', i + 1)) {
+    const before = s.slice(0, i);
+    if (!before.trim()) return -1;
+    if (before.includes('```')) return -1;
+    const rest = s.slice(i);
+    if (!rest.includes('tool_use') && !rest.includes('bridge_tool')) continue;
+    if (isBareCall(rest)) {
+      let o = null;
+      try {
+        o = JSON.parse(rest.trim());
+      } catch {
+        continue;
+      }
+      if (o && typeof o === 'object' && (typeof o.name === 'string' || typeof o.bridge_tool === 'string')) return i;
+      continue;
+    }
+  }
+  return -1;
+}
+
 function balance(text, start) {
   let depth = start;
   let inStr = false;
@@ -120,6 +142,12 @@ function proseOf(text, streaming) {
         bare = d;
         continue;
       }
+    }
+
+    const glued = gluedCallIndex(line);
+    if (glued > 0) {
+      out.push(line.slice(0, glued));
+      continue;
     }
     out.push(line);
   }

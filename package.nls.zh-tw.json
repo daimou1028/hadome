@@ -21,7 +21,8 @@
   "config.projectRulesLanguage.description": "寫進 ChatGPT 專案指示的規則要用哪種語言。8,000 的上限算的是**字元數**，所以越精簡的語言塞得越多（同一套規則實測：繁體中文 2,812 / 日文 3,592 / 英文 6,778）。預設跟著面板語言。",
   "config.language.description": "介面語言。預設的 auto 會跟著編輯器的顯示語言，平常不需要動。只有想用和編輯器不同的語言時才設定。",
   "config.subAgents.description": "最多可以同時跑幾個子代理。0 表示不使用。每個子代理會多開一個 chatgpt.com 分頁。",
-  "config.subAgentCleanup.description": "子代理結束後要怎麼處理對話。none = 不處理；archive-success = 只有成功時封存（預設；失敗會保留以便追查原因）；archive-all = 不論成敗都封存；delete-success = 只有成功時刪除（無法復原）。",
+  "config.maxSendsPerHour.description": "每 1 小時最多送出幾次。0 表示不限制。尚未有足夠實測資料決定預設上限，因此預設 0。",
+  "config.subAgentCleanup.description": "子代理結束後要怎麼處理對話。預設為 none = 不處理。只有明確設定時才可使用 archive-success = 只封存成功的對話，或 archive-all = 不論成敗都封存。刪除功能在破壞性操作驗證完成前維持停用。",
   "config.subPortBase.description": "子代理使用的第一個連接埠。會從這裡開始連號往上取。",
   "config.revealOnStart.description": "編輯器啟動時就打開對話面板。自動化檢查時好用；預設不打開。",
   "config.allowedOutside.description": "工作區以外、允許碰的資料夾。按下「總是允許」就會把該資料夾加到這裡。這裡只管**讀取**，寫入由 allowedOutsideWrite 另外管。",
@@ -93,8 +94,8 @@
   "config.browserPath.description": "`browser_*` 要操作哪個瀏覽器。留空（預設）會去找你載入配套擴充功能的那個瀏覽器，找不到就用已安裝的第一個。填執行檔路徑可以指定。",
   "config.browserProfile.description": "那個瀏覽器使用的設定檔目錄。留空（預設）會用 Application Support 底下的專用目錄，和你平常用的瀏覽器分開——工具不會碰其他的。清楚知道自己交出了什麼再改。",
   "config.thinking.description": "送出前先把 ChatGPT 的「思考」打開。**這個開關只有在目前的分頁上真的有那顆按鈕、而且按得動的時候才會出現**（chatgpt.com 從 2026-08 以來變過三次，所以這邊不寫死）。",
-  "config.model.description": "/backend-api/models 的模型 slug（例如 gpt-5-6-instant）。留空就不變更，沿用分頁目前選擇的模型。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。",
-  "config.thinkingEffort.description": "/backend-api/models 的 thinking_effort（例如 min / standard / extended / max）。留空就不變更，沿用分頁目前選擇的值。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。",
-  "config.subAgentModel.description": "只套用到子代理分頁的 /backend-api/models 模型 slug（例如 gpt-5-6-instant）。留空就不變更，沿用該分頁目前選擇的模型。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。",
-  "config.subAgentThinkingEffort.description": "只套用到子代理分頁的 /backend-api/models thinking_effort（例如 min / standard / extended / max）。留空就不變更，沿用該分頁目前選擇的值。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。"
+  "config.model.description": "/backend-api/models 的模型 slug（例如 gpt-5-6）。留空就不變更，沿用分頁目前選擇的模型。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。",
+  "config.thinkingEffort.description": "/backend-api/models 的 thinking_effort（對方回傳的值；可能是空的，這時就沒得選）。留空就不變更，沿用分頁目前選擇的值。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。",
+  "config.subAgentModel.description": "只套用到子代理分頁的 /backend-api/models 模型 slug（例如 gpt-5-6）。留空就不變更，沿用該分頁目前選擇的模型。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。",
+  "config.subAgentThinkingEffort.description": "只套用到子代理分頁的 /backend-api/models thinking_effort（對方回傳的值；可能是空的，這時就沒得選）。留空就不變更，沿用該分頁目前選擇的值。不能選的值會由分頁在送出前拒絕，並在不改本文的情況下送出。"
 }

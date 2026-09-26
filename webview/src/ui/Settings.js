@@ -83,7 +83,7 @@ function Settings({ values, models, loading, cached, t, onChange, onBack, onOpen
       <section>
         <h3>{t('agentSettings.subAgentCleanup')}</h3>
         <div className="settingscleanup">
-          {['archive-success', 'archive-all', 'delete-success', 'none'].map((value) => (
+          {['archive-success', 'archive-all', 'none'].map((value) => (
             <button
               key={value}
               type="button"

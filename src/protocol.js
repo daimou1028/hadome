@@ -69,6 +69,31 @@ function bareCallStarts(line) {
   return !String(line).trim().endsWith('}');
 }
 
+function gluedCallIndex(line) {
+  const s = String(line == null ? '' : line);
+  for (let i = s.indexOf('{'); i > 0; i = s.indexOf('{', i + 1)) {
+    const before = s.slice(0, i);
+
+    if (!before.trim()) return -1;
+
+    if (before.includes('```')) return -1;
+    const rest = s.slice(i);
+    if (!isToolJson(rest)) continue;
+
+    if (looksLikeBareCall(rest)) {
+      let o = null;
+      try {
+        o = JSON.parse(rest.trim());
+      } catch {
+        continue;
+      }
+      if (o && typeof o === 'object' && (typeof o.name === 'string' || typeof o.bridge_tool === 'string')) return i;
+      continue;
+    }
+  }
+  return -1;
+}
+
 function escapeRawNewlines(s) {
   let out = '';
   let inStr = false;
@@ -152,6 +177,11 @@ function fenceBodies(text) {
 
         const before = line.slice(0, tail.index);
         if (looksLikeBareCall(before)) out.push({ body: before.trim(), attrs: {} });
+        else {
+
+          const at = gluedCallIndex(before);
+          if (at > 0 && looksLikeBareCall(before.slice(at))) out.push({ body: before.slice(at).trim(), attrs: {} });
+        }
         body = [];
         attrs = attrsOf(after);
         continue;
@@ -176,6 +206,14 @@ function fenceBodies(text) {
     else if (bareCallStarts(line)) {
       bare = [line];
       bareDepth = braceDelta(line);
+    }
+
+    else {
+      const at = gluedCallIndex(line);
+      if (at > 0) {
+
+        out.push({ body: line.slice(at).trim(), attrs: {} });
+      }
     }
   }
 
@@ -1093,6 +1131,65 @@ function extractAround(text, needle) {
   return text.slice(Math.max(0, i - 200), i + 400);
 }
 
+function splitResultGroups(results, budget) {
+
+  const 上限 = Number(budget);
+  if (!(上限 > 0)) throw new Error(`splitResults: 上限が正の数ではない（${budget}）`);
+  const 長さ = (items) => formatResults(items, 0).length;
+  const 片 = [];
+  for (const r of results) {
+    const body = String(r.output == null ? '' : r.output);
+    if (長さ([r]) <= 上限) {
+      片.push(r);
+      continue;
+    }
+
+    const 仮の印 = (k, n) => `（この結果は長いので ${n} 片に分けて送ります。これは ${k}/${n} 片目）\n`;
+
+    const 字 = Array.from(body);
+    const 測る = (a, b) => 長さ([{ ...r, output: 仮の印(99999, 99999) + 字.slice(a, b).join('') }]);
+
+    if (!字.length || 測る(0, 1) > 上限) {
+      throw new Error(`splitResults: 上限 ${上限} 字では、殻と印だけで越える（id が長すぎるか、上限が小さすぎる）`);
+    }
+    const 切り = [];
+    let 位置 = 0;
+    while (位置 < 字.length) {
+
+      let 下 = 1;
+      let 上 = 字.length - 位置;
+      if (測る(位置, 位置 + 1) > 上限) {
+        throw new Error(`splitResults: 上限 ${上限} 字では、1 字も入らない（id が長すぎるか、上限が小さすぎる）`);
+      }
+      while (下 < 上) {
+        const 中 = Math.ceil((下 + 上) / 2);
+        if (測る(位置, 位置 + 中) <= 上限) 下 = 中;
+        else 上 = 中 - 1;
+      }
+      切り.push(字.slice(位置, 位置 + 下).join(''));
+      位置 += 下;
+    }
+    const n = 切り.length;
+    切り.forEach((s, k) => 片.push({ ...r, output: 仮の印(k + 1, n) + s }));
+  }
+  const 組 = [];
+  let 今 = [];
+  for (const x of 片) {
+    if (今.length && 長さ([...今, x]) > 上限) {
+      組.push(今);
+      今 = [x];
+    } else {
+      今.push(x);
+    }
+  }
+  if (今.length) 組.push(今);
+  return 組;
+}
+
+function splitResults(results, budget) {
+  return splitResultGroups(results, budget).map((g) => formatResults(g, 0));
+}
+
 function formatResults(results, budget = 0) {
   const head = ['ツールの結果です。続けてください。', ''];
   const wrap = (r, content) => {
@@ -1268,7 +1365,10 @@ function dropCoveredRules(text) {
 }
 
 module.exports = {
+  splitResults,
+  splitResultGroups,
   FIRST_MESSAGE_RESERVE,
   FIRST_MESSAGE_BUDGET, buildGoalCheck, buildGoalContinue, COVERED, languagePreference,
   looksLikeBareCall,
+  gluedCallIndex,
   jsonObjectsIn, buildInstruction, writeFileRecall, parseToolCalls, formatResults, formatBrokenNotice, toolAlias, TOOL_ALIASES };

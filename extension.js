@@ -1,4 +1,5 @@
 const vscode = require('vscode');
+const { buildChoices, pathOf, labelsOf, rememberable } = require('./src/tabpick');
 const path = require('path');
 const { pickDirty } = require('./src/dirtysave');
 const { newProblems, formatNewProblems } = require('./src/newproblems');
@@ -40,6 +41,7 @@ const { makeT } = require('./src/i18n');
 const { makeQueue } = require('./src/queue');
 const { makePool } = require('./src/pool');
 const { makeSubagents, formatSubagentResults } = require('./src/subagents');
+const { decideConversationChange } = require('./src/conversation-lifecycle');
 const { buildGoalCheck, buildGoalContinue } = require('./src/protocol');
 const { runAgent: runSubAgent } = require('./src/agent');
 const { execFileSync } = require('child_process');
@@ -87,6 +89,19 @@ let session = null;
 let store = null;
 
 let globalStore = null;
+
+let editorId = '';
+async function ensureEditorId() {
+  if (editorId) return editorId;
+  const saved = globalStore && globalStore.get('editorId');
+  if (typeof saved === 'string' && saved) {
+    editorId = saved;
+    return editorId;
+  }
+  editorId = 'e-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  if (globalStore) await globalStore.update('editorId', editorId);
+  return editorId;
+}
 let storeRoot = null;
 let current = null;
 
@@ -252,8 +267,9 @@ function settings() {
     requireRestorePoint: c.get('requireRestorePoint', false),
     protectSecrets: c.get('protectSecrets', true),
     loadGlobalRules: c.get('loadGlobalRules', true),
-    subAgents: c.get('subAgents', 2),
-    subAgentCleanup: c.get('subAgentCleanup', 'archive-success'),
+    subAgents: c.get('subAgents', 0),
+    maxSendsPerHour: c.get('maxSendsPerHour', 0),
+    subAgentCleanup: c.get('subAgentCleanup', 'none'),
     model: c.get('model', ''),
     thinkingEffort: c.get('thinkingEffort', ''),
     subAgentModel: c.get('subAgentModel', ''),
@@ -282,6 +298,10 @@ function settings() {
     outputStyle: c.get('outputStyle', ''),
     requireModifierToSend: c.get('requireModifierToSend', true),
   };
+}
+
+function gapMsFromSettings() {
+  return Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000;
 }
 
 function runInTerminal(root, command) {
@@ -357,21 +377,106 @@ function projectHomeOf(url) {
   return m ? `${m[1]}/project` : '';
 }
 
-async function ensureBridge(s, port) {
+function noteWhere(s, id, url) {
+  current.conversationId = id;
+  current.conversationUrl = url;
+  current.pluginId = accountOf(s);
+  const chromeTabId = s && s.bridge && s.bridge.chromeTabId && s.bridge.chromeTabId();
+  if (Number.isInteger(chromeTabId)) current.chromeTabId = chromeTabId;
+}
+
+function rememberedTarget() {
+  if (!current || !current.conversationUrl) return null;
+
+  if (!rememberable(current.conversationUrl)) return null;
+  return {
+    url: current.conversationUrl,
+    pluginId: current.pluginId || '',
+    chromeTabId: Number.isInteger(current.chromeTabId) ? current.chromeTabId : null,
+  };
+}
+
+async function startTabPick(s, { wait = true } = {}) {
+  const bridge = s && s.bridge;
+  if (!bridge || !bridge.roster || !bridge.wantTab) return;
+  if (s.tabPickAsked || s.busy) return;
+  let rosters = bridge.roster();
+  if (wait) {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      rosters = bridge.roster();
+    }
+  }
+  const editorId = await ensureEditorId();
+
+  const target = rememberedTarget();
+  const wanted = target ? { ...target, url: pathOf(target.url) } : null;
+  const result = buildChoices({ rosters, editorId, wanted });
+
+  if (s.busy || s.bridge !== bridge) return;
+  if (!result.ask) {
+    if (result.pick) {
+      if (typeof bridge.useTab === 'function') bridge.useTab(result.pick);
+      else bridge.wantTab(result.pick);
+    }
+    return;
+  }
+
+  const currentChromeTabId = bridge.chromeTabId && Number.isInteger(bridge.chromeTabId())
+    ? bridge.chromeTabId()
+    : null;
+  const actions = labelsOf(result.groups, {
+    currentChromeTabId,
+    currentPluginId: helloAccountOf(s),
+    words: {
+      window: t('tabpick.window'),
+      tab: t('tabpick.tab'),
+      current: t('tabpick.current'),
+      background: t('tabpick.background'),
+    },
+  }).map((choice) => ({
+    label: choice.label,
+    action: 'tabpick',
+    answer: JSON.stringify(choice.value),
+  }));
+
+  if (s.tabPickAsked || s.busy || s.bridge !== bridge) return;
+  if (actions.length) {
+    s.tabPickAsked = true;
+    post({ type: 'ask', kind: 'tabpick', text: t('ask.tabpick'), actions });
+  }
+}
+
+async function ensureBridge(s, port, { quiet = false } = {}) {
   if (s.bridge) return true;
+  s.tabPickAsked = false;
   let tabHeavyWarned = false;
-  post({ type: 'note', text: t('note.waitingTab') });
+  if (!quiet) post({ type: 'note', text: t('note.waitingTab') });
   try {
     s.bridge = await openBridge({
       port,
       onLog: log,
+      editorId: await ensureEditorId(),
 
       workspace: pickWorkspace() || '',
 
       t: (k, v) => t(k, v),
 
-      onConversationChange: (id, url, title, fromId) =>
-        handleConversationChange(s, id, url, fromId),
+      createGapMs: gapMsFromSettings(),
+
+      onRoster: (r) => {
+        if (r && r.pluginId && s && !s.pluginId) s.pluginId = r.pluginId;
+
+        void startTabPick(s, { wait: false });
+      },
+
+      onConversationChange: (id, url, title, fromId) => {
+        if (helloAccountOf(s) && String(url || '').includes('_tm=project_not_found')) {
+          forgetProjectMemo(globalStore, helloAccountOf(s));
+        }
+        handleConversationChange(s, id, url, fromId);
+      },
       onTabHealth: (st) => {
         if (!st || st.ok === false) {
           const text = t('note.tabUnresponsive');
@@ -398,7 +503,12 @@ async function ensureBridge(s, port) {
       },
     });
 
-    await s.bridge.waitForTab();
+    if (quiet) {
+
+      log('[bridge] パネルを開いたので橋を開きました（タブはまだ待っていません）');
+    } else {
+      await s.bridge.waitForTab();
+    }
 
     const home =
       s.projectUrl || settings().projectUrl || projectHomeOf((current && current.conversationUrl) || '');
@@ -427,6 +537,16 @@ async function ensureBridge(s, port) {
       dropCarriedTabs(s);
       post({ type: 'note', text: t('note.tabConnected') });
     }
+
+    if (s.bridge && s.bridge.chromeTabId) {
+      const chromeTabId = s.bridge.chromeTabId();
+      if (Number.isInteger(chromeTabId)) s.chromeTabId = chromeTabId;
+    }
+    const wanted = rememberedTarget();
+    if (s.bridge && s.bridge.wantTab && wanted) {
+      s.bridge.wantTab(wanted);
+    }
+    void startTabPick(s);
     return true;
   } catch (e) {
     log(`[失敗] ${e.message}`);
@@ -493,6 +613,12 @@ function loadGlobal(root) {
   return { rules, projectRules, skills, ruleNames: globalrules.listRules() };
 }
 
+function effectiveDisabledTools() {
+  const off = Array.isArray(settings().disabledTools) ? settings().disabledTools : [];
+  if (Number(settings().subAgents) > 0 || off.includes('spawn_agents')) return off;
+  return [...off, 'spawn_agents'];
+}
+
 function makeSpawner(s, opts) {
   const { maxTurns, protectSecrets } = opts;
   const pool = makePool({
@@ -504,7 +630,7 @@ function makeSpawner(s, opts) {
       await s.bridge.openTabFor(port);
     },
     openBridge: async (port) => {
-      const b = await openBridge({ port, onLog: log, t: (k, v) => t(k, v) });
+      const b = await openBridge({ port, onLog: log, t: (k, v) => t(k, v), createGapMs: gapMsFromSettings() });
       await b.waitForTab();
 
       const projectUrl =
@@ -512,10 +638,20 @@ function makeSpawner(s, opts) {
       if (projectUrl) {
         if (b.setProjectUrl) b.setProjectUrl(projectUrl);
         try {
-          const r = await b.newConversation(projectUrl);
+          const r = await b.newConversation(projectUrl, { reason: 'subagent-start', actor: 'subagent', gapMs: gapMsFromSettings() });
+
           if (r && r.fresh === false) log(`[sub:${port}] 既存の対話の続きに成りました（${r.url || '?'}）`);
         } catch (e) {
           log(`[sub:${port}] 専案へ入れませんでした（${e && e.message}）`);
+
+          if (e && e.projectGone) {
+            try {
+              await b.close();
+            } catch {
+
+            }
+            throw e;
+          }
         }
       }
       return b;
@@ -546,6 +682,7 @@ function makeSpawner(s, opts) {
         of: of || null,
       });
     },
+    shouldStop: () => !!s.cancel || !!s.serverBlocked,
     runOne: async ({ bridge, task, name, at }) => {
 
       const r = await runSubAgent({
@@ -561,6 +698,13 @@ function makeSpawner(s, opts) {
         readOnly: true,
         model: settings().subAgentModel,
         thinkingEffort: settings().subAgentThinkingEffort,
+
+        maxSendsPerHour: settings().maxSendsPerHour,
+
+        onServerRefusal: (e) => {
+          s.serverBlocked = true;
+          if (typeof subs.stop === 'function') subs.stop();
+        },
 
         global: loadGlobal(s.root),
 
@@ -592,19 +736,24 @@ function makeSpawner(s, opts) {
       const cleanupMode = settings().subAgentCleanup;
       let cleanupAction = '';
       if (cleanupMode === 'archive-all' || (cleanupMode === 'archive-success' && r.status === 'done')) cleanupAction = 'archive';
-      if (cleanupMode === 'delete-success' && r.status === 'done') cleanupAction = 'delete';
       if (cleanupAction && bridge && typeof bridge.cleanupConversation === 'function') {
         const cleanupPort = settings().subPortBase + at - 1;
-        try {
-          const cleaned = await bridge.cleanupConversation(cleanupAction);
-          if (cleaned && cleaned.ok) {
-            log(`[sub:${cleanupPort}] 対話を ${cleanupAction} しました`);
-          } else {
-            const why = String((cleaned && (cleaned.why || cleaned.status)) || 'unknown');
-            log(`[sub:${cleanupPort}] 対話を ${cleanupAction} できませんでした（${why}）`);
+        const createdConversationIds =
+          bridge && typeof bridge.createdConversationIds === 'function'
+            ? bridge.createdConversationIds().map((id) => String(id || '').trim()).filter(Boolean)
+            : [];
+        for (const conversationId of createdConversationIds) {
+          try {
+            const cleaned = await bridge.cleanupConversation(cleanupAction, conversationId);
+            if (cleaned && cleaned.ok) {
+              log(`[sub:${cleanupPort}] 作成した対話 ${conversationId} を ${cleanupAction} しました`);
+            } else {
+              const why = String((cleaned && (cleaned.why || cleaned.status)) || 'unknown');
+              log(`[sub:${cleanupPort}] 作成した対話 ${conversationId} を ${cleanupAction} できませんでした（${why}）`);
+            }
+          } catch (e) {
+            log(`[sub:${cleanupPort}] 作成した対話 ${conversationId} を ${cleanupAction} できませんでした（${String((e && e.message) || e)}）`);
           }
-        } catch (e) {
-          log(`[sub:${cleanupPort}] 対話を ${cleanupAction} できませんでした（${String((e && e.message) || e)}）`);
         }
       }
 
@@ -615,6 +764,8 @@ function makeSpawner(s, opts) {
       return String(r.summary || '').trim();
     },
   });
+
+  s.stopSubs = () => subs.stop();
 
   return async (tasks) => {
     const r = await subs.run(tasks);
@@ -674,6 +825,7 @@ async function handleRun(task) {
 
   let stallTimer = null;
   let waitingOn = '';
+  const silentRecovery = { nudged: false };
   try {
     if (!(await ensureBridge(s, port))) return;
 
@@ -700,17 +852,11 @@ async function handleRun(task) {
     const inConversation =
       s.bridge.conversationId() || (s.bridge.tabTurns && s.bridge.tabTurns() > 0);
     if (!inConversation) {
-      const proj = await waitNoting(t('wait.project'), () => ensureBridgeProject(s));
-      if (!proj.ok) {
-        post({ type: 'error', text: t('bp.failed', { why: proj.why || '?' }) });
-        return;
-      }
-      s.projectUrl = proj.url || '';
-      if (s.bridge.setProjectUrl) s.bridge.setProjectUrl(proj.url || '');
 
-      if (s.bridge.requireProject) s.bridge.requireProject(!!(proj && proj.url));
-
-      await waitNoting(t('wait.newConv'), () => s.bridge.newConversation(proj.url || ''));
+      const opened = await openProject(s, (label, fn) =>
+        label === 'project' ? waitNoting(t('wait.project'), fn) : waitNoting(t('wait.newConv'), fn)
+      , { allowRecreate: false, lifecycle: { reason: 'entry-send', actor: 'user', gapMs: gapMsFromSettings() } });
+      if (!opened.ok) return;
       s.started = false;
       if (current) current.instructionSent = false;
     }
@@ -718,6 +864,7 @@ async function handleRun(task) {
     if (!(await confirmConversation(s, task))) return;
 
     s.cancel = false;
+    s.serverBlocked = false;
     let label = '';
     let shown = 0;
 
@@ -775,7 +922,7 @@ async function handleRun(task) {
         allowlist,
         denylist,
         protectSecrets,
-        disabled: settings().disabledTools,
+        disabled: effectiveDisabledTools(),
 
         browserProfile: settings().browserProfile || '',
         browserPath: settings().browserPath || '',
@@ -819,7 +966,7 @@ async function handleRun(task) {
       model: settings().model,
       thinkingEffort: settings().thinkingEffort,
 
-      restartGapMs: Math.max(0, Number(settings().restartGapSeconds) || 0) * 1000,
+      restartGapMs: gapMsFromSettings(),
 
       tr: (k, v) => t(k, v),
 
@@ -842,7 +989,7 @@ async function handleRun(task) {
         post({ type: 'note', text: t('note.planAccepted') });
       },
 
-      disabledTools: settings().disabledTools,
+      disabledTools: effectiveDisabledTools(),
       modes: settings().modes,
 
       startMode,
@@ -856,7 +1003,10 @@ async function handleRun(task) {
       onTurnsExhausted: ({ turns }) => askMoreTurns(s, turns),
 
       onFailingStreak: ({ times, why }) => askFailingStreak(times, why),
-      onSilentStreak: ({ times, why, calledEver }) => askSilentStreak(times, why, calledEver),
+      onSilentStreak: ({ times, why, calledEver }) => askSilentStreak(times, why, calledEver, silentRecovery),
+      onStuck: ({ kind, times, why }) => askStuck(kind, times, why),
+
+      onRestart: (info) => askRestart(info),
 
       onDowngrade: (info) => askDowngrade(info),
       onTodosOpen: ({ left }) => askTodosOpen(left),
@@ -1013,11 +1163,17 @@ async function handleRun(task) {
       isRevoked: isRevokedAllow,
 
       spawnAgents: makeSpawner(s, { maxTurns, protectSecrets }),
+      maxSendsPerHour: settings().maxSendsPerHour,
+      onServerRefusal: (e) => {
+        s.serverBlocked = true;
+        if (typeof s.stopSubs === 'function') s.stopSubs();
+        log(`[agent] サーバー拒否で走りを停止します（${e && e.reason || e && e.status || 'unknown'}）`);
+      },
 
       locale: localeNow(),
 
       global: loadGlobal(s.root),
-      shouldStop: () => s.cancel,
+      shouldStop: () => !!s.cancel || !!s.serverBlocked,
       onLog: (line) => {
         log(line);
 
@@ -1034,6 +1190,12 @@ async function handleRun(task) {
       onNotice: (n) => {
         const make = {
           tooLong: () => t('note.sentAsFile', { chars: String(n.chars || '') }),
+          usageLimit: () => (n.model ? t('note.usageLimit', { model: String(n.model) }) : t('note.usageLimitNoModel')),
+          modelNotHonored: () => t('note.modelNotHonored', { want: String(n.want || ''), got: String(n.got || '') }),
+          weakerPrompt: () => t('note.weakerPrompt', { model: String(n.model || '') }),
+          remindTools: () => t('note.remindTools', { n: String(n.n || 0) }),
+          refused: () => t('note.refused.' + String(n.reason || ''), { status: String(n.status || '') }),
+          serverBackoff: () => t('note.serverBackoff', { sec: String(Math.ceil(Number(n.waitMs || 0) / 1000)) }),
           sameCall: () => t('note.sameCall', { n: String(n.n || '?') }),
           delivered: () => t('note.notResending'),
           resend: () => t('note.resendingOnce'),
@@ -1168,6 +1330,9 @@ async function handleRun(task) {
     if (current && convId) {
       current.conversationUrl = convUrl;
       current.conversationId = convId;
+      current.pluginId = accountOf(s);
+      const chromeTabId = s.bridge.chromeTabId && s.bridge.chromeTabId();
+      if (Number.isInteger(chromeTabId)) current.chromeTabId = chromeTabId;
       sessions.save(storeRoot, current);
     }
     log(`\nstate: ${result.status} / ターン数: ${result.turns}`);
@@ -1257,8 +1422,7 @@ function handleConversationChange(s, id, url, fromId) {
 
   if (s && s.busy) {
     if (current) {
-      current.conversationId = id;
-      current.conversationUrl = url;
+      noteWhere(s, id, url);
       sessions.save(storeRoot, current);
     }
     log(`[bridge] 送って始まった対話です: ${id}`);
@@ -1266,8 +1430,7 @@ function handleConversationChange(s, id, url, fromId) {
   }
 
   if (current && !current.conversationId) {
-    current.conversationId = id;
-    current.conversationUrl = url;
+    noteWhere(s, id, url);
     sessions.save(storeRoot, current);
     log(`[bridge] この対話に名前が付きました: ${id}`);
     return;
@@ -1291,8 +1454,7 @@ function handleConversationChange(s, id, url, fromId) {
   }
 
   startSession(s.root);
-  current.conversationId = id;
-  current.conversationUrl = url;
+  noteWhere(s, id, url);
   current.instructionSent = false;
   sessions.save(storeRoot, current);
   s.started = false;
@@ -1304,50 +1466,47 @@ function handleConversationChange(s, id, url, fromId) {
   });
 }
 
-async function handleFresh() {
+async function handleFresh(reason) {
   const s = ensureSession();
-  if (!s) return;
+  if (!s) return { ok: false, reason: 'no-session' };
+  const decision = decideConversationChange({ reason, explicit: true });
+  if (decision.action !== 'create') {
+    log(`[bridge] 新しい対話を始めません（reason=${String(reason || '')}, action=${decision.action}）`);
+    return { ok: false, reason: String(reason || 'invalid-reason') };
+  }
   if (s.busy) {
     post({ type: 'note', text: t('note.busySwitch') });
-    return;
+    return { ok: false, reason: 'busy' };
   }
   const { port } = settings();
-  if (!(await ensureBridge(s, port))) return;
+  if (!(await ensureBridge(s, port))) return { ok: false, reason: 'no-bridge' };
+  const before = {
+    conversationId: s.bridge && typeof s.bridge.conversationId === 'function' ? String(s.bridge.conversationId() || '') : '',
+    url: s.bridge && typeof s.bridge.tabUrl === 'function' ? String(s.bridge.tabUrl() || '') : '',
+    projectUrl: String(s.projectUrl || settings().projectUrl || ''),
+    at: Date.now(),
+  };
 
   post({ type: 'note', text: t('note.switching') });
 
   clearOverlays();
   try {
 
-    let r = null;
-    let proj = null;
-    for (let round = 0; round < 2; round += 1) {
-      proj = await ensureBridgeProject(s);
-      if (!proj.ok) {
-        post({ type: 'error', text: t('bp.failed', { why: proj.why || '?' }) });
-        return;
-      }
-
-      s.projectUrl = proj.url || '';
-      if (s.bridge.setProjectUrl) s.bridge.setProjectUrl(proj.url || '');
-
-      if (s.bridge.requireProject) s.bridge.requireProject(!!(proj && proj.url));
-      r = await s.bridge.newConversation(proj.url || '');
-      const wanted = (/\/g\/(g-p-[A-Za-z0-9-]+)/.exec(proj.url || '') || [])[1] || '';
-      const landed = String((r && r.url) || '');
-      if (!wanted || landed.includes(wanted)) break;
-
-      if (!proj.mine) {
-        post({ type: 'error', text: t('bp.pinnedGone', { url: proj.url || '' }) });
-        return;
-      }
-
-      if (globalStore) await globalStore.update(BRIDGE_PROJECT_KEY, null);
-      if (round === 0) post({ type: 'note', text: t('bp.remaking') });
-      else {
-        post({ type: 'error', text: t('bp.notThere', { url: proj.url || '' }) });
-        return;
-      }
+    const opened = await openProject(s, undefined, {
+      allowRecreate: true,
+      lifecycle: { reason: 'user-new', actor: 'user', gapMs: gapMsFromSettings() },
+    });
+    if (!opened.ok) {
+      const failedReason = String(opened.reason || 'project-open-failed');
+      log(`[bridge] 対話ライフサイクル ${JSON.stringify({ reason, choice: 'create', before, after: null, failedReason })}`);
+      return { ok: false, fresh: false, reason: failedReason };
+    }
+    const r = opened.r;
+    if (!r || r.fresh !== true) {
+      const reason = r && r.fresh === false ? 'existing-conversation-fallback' : 'fresh-conversation-not-confirmed';
+      log(`[bridge] 新しい対話を確認できないため送信しません（reason=${reason}, url=${(r && r.url) || '?'}）`);
+      post({ type: 'error', text: t('note.switchFailed', { why: reason }) });
+      return { ok: false, fresh: false, reason, result: r || null };
     }
     s.started = false;
 
@@ -1364,8 +1523,17 @@ async function handleFresh() {
         { where: (r && r.url) || t('hist.whereUnknown') }
       ),
     });
+    const after = {
+      conversationId: s.bridge && typeof s.bridge.conversationId === 'function' ? String(s.bridge.conversationId() || '') : '',
+      url: String((r && r.url) || (s.bridge && typeof s.bridge.tabUrl === 'function' ? s.bridge.tabUrl() : '') || ''),
+      projectUrl: String(s.projectUrl || settings().projectUrl || ''),
+      at: Date.now(),
+    };
+    log(`[bridge] 対話ライフサイクル ${JSON.stringify({ reason, choice: 'create', before, after })}`);
+    return { ok: true, fresh: true, reason, result: r, before, after };
   } catch (e) {
     post({ type: 'error', text: t('note.switchFailed', { why: e.message }) });
+    return { ok: false, fresh: false, reason: String((e && e.message) || e) };
   }
 }
 
@@ -1829,6 +1997,47 @@ function askFailingStreak(times, why) {
   });
 }
 
+let pendingStuck = null;
+function askStuck(kind, times, why) {
+  const stopped = neverModeStop('never.why.stuck');
+  if (stopped !== null) return Promise.resolve(stopped);
+  return new Promise((resolve) => {
+    if (pendingStuck) pendingStuck.resolve('');
+    pendingStuck = { resolve };
+    post({
+      type: 'ask',
+      text: t(kind === 'badFormat' ? 'stuck.badFormat' : 'stuck.sameCall', { n: times }),
+      detail: why,
+      kind: 'stuck',
+      actions: [
+        { label: t('stuck.go'), action: 'stuck', answer: 'go' },
+        { label: t('stuck.stop'), action: 'stuck', answer: '' },
+      ],
+    });
+  });
+}
+
+let pendingRestart = null;
+function askRestart(info) {
+  if (settings().mode === 'never') return Promise.resolve('stop');
+  const why = t('restartWhy.' + String(info.why || 'other'));
+  return new Promise((resolve) => {
+    if (pendingRestart) pendingRestart.resolve('keep');
+    pendingRestart = { resolve };
+    post({
+      type: 'ask',
+      text: t('restart.ask', { why }),
+      detail: t('restart.detail', { n: String(info.n || '?'), max: String(info.max || '?') }),
+      kind: 'restart',
+      actions: [
+        { label: t('restart.new'), action: 'restart', answer: 'restart' },
+        { label: t('restart.keep'), action: 'restart', answer: 'keep' },
+        { label: t('restart.stop'), action: 'restart', answer: 'stop' },
+      ],
+    });
+  });
+}
+
 let pendingSilent = null;
 
 let pendingTodosOpen = null;
@@ -1852,7 +2061,12 @@ function askTodosOpen(left) {
   });
 }
 
-function askSilentStreak(times, why, calledEver) {
+function askSilentStreak(times, why, calledEver, silentRecovery = null) {
+  if (settings().mode === 'never' && silentRecovery && !silentRecovery.nudged) {
+    silentRecovery.nudged = true;
+    post({ type: 'note', text: t('silent.reached', { n: times }) });
+    return Promise.resolve({ continue: true });
+  }
   const stopped = neverModeStop('never.why.silent');
   if (stopped !== null) return Promise.resolve(stopped);
   const neverCalled = !calledEver;
@@ -1888,7 +2102,8 @@ function askDowngrade(info) {
     post({
       type: 'ask',
       text: t('downgrade.ask', { from: info.from || '?', model: info.to || '?', when }),
-      detail: info.notice || '',
+
+      detail: info.notice || when,
       kind: 'downgrade',
       actions: [
         { label: t('downgrade.wait'), action: 'downgrade', answer: 'wait' },
@@ -1931,7 +2146,8 @@ async function handleCompact() {
   post({ type: 'note', text: t('compact.summary', { n: text.length }) });
   post({ type: 'answer', text });
 
-  await handleFresh();
+  const fresh = await handleFresh('conversation-guard');
+  if (!fresh.ok) return;
   post({ type: 'note', text: t('compact.carried') });
   await handleRun(compact.handoffMessage(text));
 }
@@ -1984,7 +2200,7 @@ async function handleExit() {
 }
 
 const BUILTIN_COMMANDS = [
-  { name: 'new', run: () => handleFresh() },
+  { name: 'new', run: () => handleFresh('slash-new') },
   { name: 'clear', run: () => post({ type: 'clear' }) },
   { name: 'compact', run: () => handleCompact() },
 
@@ -2006,9 +2222,44 @@ function setWaitingOn(where) {
   waitingOnGlobal = String(where || '');
 }
 
-const BRIDGE_PROJECT_KEY = 'chatgptBridge.dedicatedProject';
+const { readProjectMemo, writeProjectMemo, forgetProjectMemo } = require('./src/projectmemo');
+const { openProjectConversation } = require('./src/projectopen');
+
+function accountOf(s) {
+  const fromHello = s && s.bridge && typeof s.bridge.pluginId === 'function' ? s.bridge.pluginId() : '';
+  return String(fromHello || (s && s.pluginId) || '');
+}
+
+function helloAccountOf(s) {
+  const fromHello = s && s.bridge && typeof s.bridge.pluginId === 'function' ? s.bridge.pluginId() : '';
+  return String(fromHello || '');
+}
 
 const GOAL_KEY = 'chatgptBridge.goal';
+
+function openProject(s, step, { allowRecreate = false, lifecycle = null } = {}) {
+  return openProjectConversation({
+    bridge: s.bridge,
+    ensureProject: () => ensureBridgeProject(s),
+    forget: async () => {
+      if (globalStore) await forgetProjectMemo(globalStore, helloAccountOf(s));
+    },
+
+    remember: (proj) => {
+      s.projectUrl = proj.url || '';
+      if (s.bridge.setProjectUrl) s.bridge.setProjectUrl(proj.url || '');
+    },
+    tell: (kind, vars = {}) => {
+      if (kind === 'remaking') post({ type: 'note', text: t('bp.remaking') });
+      else if (kind === 'failed') post({ type: 'error', text: t('bp.failed', { why: vars.why || '?' }) });
+      else if (kind === 'pinnedGone') post({ type: 'error', text: t('bp.pinnedGone', { url: vars.url || '' }) });
+      else post({ type: 'error', text: t('bp.notThere', { url: vars.url || '' }) });
+    },
+    step,
+    allowRecreate,
+    lifecycle,
+  });
+}
 
 async function ensureBridgeProject(s) {
 
@@ -2016,7 +2267,7 @@ async function ensureBridgeProject(s) {
   if (pinned) return { ok: true, url: pinned, mine: false };
   if (!globalStore) return { ok: false, why: 'noStore' };
 
-  const memo = globalStore.get(BRIDGE_PROJECT_KEY, null);
+  const memo = readProjectMemo(globalStore, helloAccountOf(s));
   if (memo && memo.id) {
     setWaitingOn(t('wait.readRules'));
 
@@ -2114,7 +2365,7 @@ async function ensureBridgeProject(s) {
       : t('mk.madeOnly', { name: projName, why: w.why || '?' }),
   });
   setWaitingOn('');
-  await globalStore.update(BRIDGE_PROJECT_KEY, { id, name: projName });
+  await writeProjectMemo(globalStore, helloAccountOf(s), { id, name: projName });
 
   if (w.ok) {
     const again = await projectRuleState(projName);
@@ -2228,6 +2479,7 @@ const fromWebview = {
     } else {
       post({ type: 'note', text: t('note.allowlist', { list: settings().allowlist.join(' / ') }) });
     }
+    void ensureBridge(ensureSession(), settings().port, { quiet: true });
   },
 
   async fork({ at, upto }) {
@@ -2244,7 +2496,8 @@ const fromWebview = {
     );
     if (go !== t('fork.go')) return { ok: false };
 
-    await handleFresh();
+    const fresh = await handleFresh('conversation-guard');
+    if (!fresh.ok) return { ok: false, why: fresh.reason || 'fresh-failed' };
 
     const body = [
       t('fork.head'),
@@ -2383,10 +2636,10 @@ const fromWebview = {
     return {
       model: config.get('model', ''),
       thinkingEffort: config.get('thinkingEffort', ''),
-      subAgents: config.get('subAgents', 2),
+      subAgents: config.get('subAgents', 0),
       subAgentModel: config.get('subAgentModel', ''),
       subAgentThinkingEffort: config.get('subAgentThinkingEffort', ''),
-      subAgentCleanup: config.get('subAgentCleanup', 'archive-success'),
+      subAgentCleanup: config.get('subAgentCleanup', 'none'),
     };
   },
 
@@ -2427,26 +2680,16 @@ const fromWebview = {
       if (key === 'subAgents') {
         valid = Number.isInteger(value) && value >= 0 && value <= 4;
       } else if (key === 'subAgentCleanup') {
-        valid = ['archive-success', 'archive-all', 'delete-success', 'none'].includes(value);
+        valid = ['archive-success', 'archive-all', 'none'].includes(value);
       } else {
         valid = typeof value === 'string';
       }
 
       if (valid) {
-        if (key === 'subAgentCleanup' && value === 'delete-success') {
-          const answer = await vscode.window.showWarningMessage(
-            t('agentSettings.deleteWarn'),
-            { modal: true },
-            t('agentSettings.deleteOk')
-          );
-          valid = answer === t('agentSettings.deleteOk');
-        }
-        if (valid) {
-          await vscode.workspace
-            .getConfiguration('chatgptBridge')
-            .update(key, value, vscode.ConfigurationTarget.Global);
-          written = true;
-        }
+        await vscode.workspace
+          .getConfiguration('chatgptBridge')
+          .update(key, value, vscode.ConfigurationTarget.Global);
+        written = true;
       }
     }
 
@@ -2455,10 +2698,10 @@ const fromWebview = {
       values: {
         model: config.get('model', ''),
         thinkingEffort: config.get('thinkingEffort', ''),
-        subAgents: config.get('subAgents', 2),
+        subAgents: config.get('subAgents', 0),
         subAgentModel: config.get('subAgentModel', ''),
         subAgentThinkingEffort: config.get('subAgentThinkingEffort', ''),
-        subAgentCleanup: config.get('subAgentCleanup', 'archive-success'),
+        subAgentCleanup: config.get('subAgentCleanup', 'none'),
       },
       written,
     };
@@ -2569,9 +2812,11 @@ const fromWebview = {
     const hRoot = (session && session.root) || pickWorkspace() || '';
     if (storeRoot) history.add(storeRoot, { text, workspace: hRoot });
 
-    await handleFresh();
+    const fresh = await handleFresh('send-fresh-key');
+    if (!fresh.ok) return { started: false, why: fresh.reason || 'fresh-failed' };
     post({ type: 'you', text });
     await handleRun(text);
+    return { started: true };
   },
 
   async openPath({ path: rel, line }) {
@@ -2629,7 +2874,8 @@ const fromWebview = {
     const task = s.pendingTask;
     s.pendingTask = null;
     s.conversationOk = false;
-    await handleFresh();
+    const fresh = await handleFresh('conversation-guard');
+    if (!fresh.ok) return { started: false, why: fresh.reason || 'fresh-failed' };
 
     post({ type: 'you', text: task });
     await handleRun(task);
@@ -2717,6 +2963,25 @@ const fromWebview = {
     return { started: true };
   },
 
+  stuck({ answer }) {
+    const w = pendingStuck;
+    if (!w) return { started: false, why: t('ask.cantStart') };
+    pendingStuck = null;
+    markAnswered(String(answer || ''), 'stuck');
+    w.resolve(String(answer || ''));
+    return { started: true };
+  },
+
+  restart({ answer }) {
+    const w = pendingRestart;
+    if (!w) return { started: false, why: t('ask.cantStart') };
+    pendingRestart = null;
+    const chosen = answer === 'restart' ? 'restart' : 'keep';
+    markAnswered(chosen, 'restart');
+    w.resolve(chosen);
+    return { started: true };
+  },
+
   moreturns({ answer }) {
     const w = pendingTurns;
     if (!w) return { started: false, why: t('ask.cantStart') };
@@ -2724,6 +2989,22 @@ const fromWebview = {
     markAnswered(String(Number(answer) || 0));
     w.resolve(Number(answer) || 0);
     return { started: true };
+  },
+
+  tabpick({ answer }) {
+    try {
+      const value = JSON.parse(String(answer || ''));
+      if (session.busy) return { started: false, why: t('tabpick.busy') };
+      if (typeof session.bridge.useTab === 'function') session.bridge.useTab(value);
+      else {
+        session.bridge.wantTab(value);
+        session.bridge.claim();
+      }
+      markAnswered(String(answer || ''), 'tabpick');
+      return { started: true };
+    } catch (err) {
+      return { started: false, why: String(err && err.message ? err.message : err) };
+    }
   },
 
   async askrun({ answer }) {
@@ -2985,7 +3266,11 @@ const uriHandler = {
       return;
     }
     if (route === 'new') {
-      await handleFresh();
+
+      const fresh = await handleFresh('uri-new');
+      if (!fresh.ok) {
+        vscode.window.showErrorMessage(t('note.switchFailed', { why: fresh.reason || 'fresh-failed' }));
+      }
       return;
     }
     if (route === 'focus') {
@@ -3320,7 +3605,8 @@ async function newConversationAs() {
   );
   if (!pick) return;
   pendingStartMode = pick.slug;
-  await handleFresh();
+  const fresh = await handleFresh('conversation-guard');
+  if (!fresh.ok) return;
   post({ type: 'note', text: t('note.startedAs', { name: pick.label }) });
 }
 
@@ -3334,7 +3620,10 @@ function dropCarriedTabs(s) {
   } catch {
     return;
   }
-  for (const [id] of list) browser.close(id).catch(() => {});
+  for (const [id, owned] of list) {
+    if (!owned || typeof owned !== 'object' || owned.owner !== 'chatgpt-bridge' || Number(owned.port) !== Number(browser.PORT)) continue;
+    browser.close(id, { port: owned.port }).catch(() => {});
+  }
 }
 
 function openWalkthrough() {
@@ -3733,7 +4022,7 @@ function activate(context) {
     vscode.commands.registerCommand('chatgptBridge.newConversation', () => {
 
       pendingStartMode = '';
-      return handleFresh();
+      return handleFresh('plus');
     }),
     vscode.commands.registerCommand('chatgptBridge.newConversationAs', newConversationAs),
     vscode.commands.registerCommand('chatgptBridge.writeProjectInstructions', writeProjectInstructions),

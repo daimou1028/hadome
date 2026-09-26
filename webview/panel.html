@@ -2512,12 +2512,17 @@
 
                     if (a.action === 'failing') return await ask('failing', { answer: a.answer });
 
+                    if (a.action === 'stuck') return await ask('stuck', { answer: a.answer });
+
+                    if (a.action === 'restart') return await ask('restart', { answer: a.answer });
+
                     if (a.action === 'silent') return await ask('silent', { answer: a.answer });
 
                     if (a.action === 'todosopen') return await ask('todosopen', { answer: a.answer });
 
                     if (a.action === 'downgrade') return await ask('downgrade', { answer: a.answer });
 
+                    if (a.action === 'tabpick') return await ask('tabpick', { answer: a.answer });
                     if (a.action === 'choice') return await ask('choice', { answer: a.answer });
                     if (a.action === 'gitinit') return await ask('gitinit');
                     if (a.action === 'newconv') return await ask('newconv');

@@ -13,7 +13,7 @@ echo "[pre-commit] npm run check:fast（19 秒ほど）" >&2
 if OUT=$(npm run check:fast 2>&1); then RC=0; else RC=$?; fi
 if [ "$RC" -ne 0 ]; then
   echo "$OUT" | tail -30 >&2
-  echo "[pre-commit] 自己検査が落ちました（RC=$RC）。直してから commit してください。どうしても通すなら SKIP_CHECK=1" >&2
+  echo "[pre-commit] 自己検査が落ちました（RC=${RC}）。直してから commit してください。どうしても通すなら SKIP_CHECK=1" >&2
   exit 1
 fi
 exit 0

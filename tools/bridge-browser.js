@@ -8,6 +8,8 @@ const os = require('os');
 const { spawn, execFileSync } = require('child_process');
 const WebSocket = require('ws');
 
+const creategate = require('../src/creategate');
+
 const CDP_PORT = Number(process.env.BRIDGE_BROWSER_PORT || 9444);
 
 const PROFILE =
@@ -18,15 +20,25 @@ const 見つけた = require('./lib/find-browser').探す();
 const CANARY = (見つけた && 見つけた.実行檔) || '';
 const EXT = path.join(__dirname, '..', 'chrome-extension');
 
-function extensionInstalled() {
+function registeredExtensionPaths() {
   const f = path.join(PROFILE, 'Default', 'Secure Preferences');
   try {
     const p = JSON.parse(require('fs').readFileSync(f, 'utf8'));
     const s = (p.extensions && p.extensions.settings) || {};
-    return Object.values(s).some((v) => String(v.path || '').includes('chrome-extension'));
+    return Object.values(s)
+      .map((v) => String(v.path || ''))
+      .filter((x) => x.includes('chrome-extension'));
   } catch {
-    return false;
+    return [];
   }
+}
+
+function extensionInstalled() {
+  return registeredExtensionPaths().some((x) => fs.existsSync(path.join(x, 'content.js')));
+}
+
+function extensionMissingPaths() {
+  return registeredExtensionPaths().filter((x) => !fs.existsSync(path.join(x, 'content.js')));
 }
 
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT || 8799);
@@ -300,6 +312,11 @@ async function toEntry() {
         記録 = 記録.filter((t) => Date.now() - t < 窓);
       }
     }
+
+    const key = path.basename(PROFILE);
+    const lastAt = creategate.readLast(key);
+    if (lastAt) console.log(`直近の作成は ${Math.round((Date.now() - lastAt) / 1000)} 秒前`);
+    await creategate.waitGap({ key, gapMs: 待ち });
     await toEntry();
     try {
       記録.push(Date.now());
@@ -352,7 +369,7 @@ async function toEntry() {
       console.log(`      起きた: ${起}${古い ? '' : '（碼より新しい）'}`);
       if (古い) {
         console.log('  ★★ **直した碼より前に起きています。載っているのは古い版です。**');
-        console.log('  ★★ `npm run browser -- --stop` してから起こし直してください。');
+        console.log('  ★★ `npm run browser -- --reload-extension` を走らせてください（閉じて、裏方のセッションを消して、新しいコードで起こします）。');
       }
     }
   } catch {
@@ -360,6 +377,16 @@ async function toEntry() {
   }
 
   const どこにも居ない = !(require('./lib/find-browser').探す() || {}).相方;
+
+  const 消えた = extensionMissingPaths();
+  if (!extensionInstalled() && 消えた.length) {
+    console.log('');
+    console.log('  ★★ **登録された相方のフォルダーが消えています**（タブ側は走っていません）:');
+    for (const x of 消えた) console.log(`       ${x}`);
+    console.log('  出ている窓の chrome://extensions で、その相方を「削除」してから、');
+    console.log('  「パッケージ化されていない拡張機能を読み込む」で次を選んでください:');
+    console.log(`       ${EXT}`);
+  }
   if (!extensionInstalled() && どこにも居ない) {
     console.log('');
     console.log('出ている窓で、次を 1 度だけやってください（設定ファイルは残ります）:');

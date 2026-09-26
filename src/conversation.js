@@ -12,13 +12,20 @@ function needsApproval({ tabUrl, tabConversationId, sessionConversationId, appro
 }
 
 function inProject(url, projectUrl) {
-  const id = (u) => {
-    const m = /\/g\/(g-p-[A-Za-z0-9]+)/.exec(String(u || ''));
-    return m ? m[1] : '';
-  };
-  const want = id(projectUrl);
+  const want = projectIdOf(projectUrl);
   if (!want) return true;
-  return id(url) === want;
+  return projectIdOf(url) === want;
 }
 
-module.exports = { needsApproval, inProject };
+function projectIdOf(u) {
+  let p = String(u || '');
+  try {
+    p = new URL(p).pathname;
+  } catch {
+    p = p.split(/[?#]/)[0];
+  }
+  const m = /^\/g\/(g-p-[A-Za-z0-9]+)/.exec(p);
+  return m ? m[1] : '';
+}
+
+module.exports = { needsApproval, inProject, projectIdOf };

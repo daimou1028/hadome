@@ -185,13 +185,14 @@ npm run package:chrome   # → hadome-chrome-<版本>.zip
 | `diagnosticsAfterEdit` | `true` | 改完後把新增的問題回報回去 |
 | `preventDoneWithOpenTodos` | `true` | 待辦還沒做完就不讓它結束 |
 | `maxTurns` | `0` | 跑 N 回合就停（`0` 表示不限） |
+| `maxSendsPerHour` | `0` | 每 1 小時最多送出幾次（`0` 表示不限） |
 | `contextWindow` | `0` | 覆寫假設的脈絡長度 |
 | `subAgents` | `2` | 同時可以跑幾個子 agent（0～4） |
 | `model` | `""` | 主代理的模型（空白 = 沿用 ChatGPT 分頁上選的） |
 | `thinkingEffort` | `""` | 主代理的思考量（`min` / `standard` / `extended` / `max`） |
 | `subAgentModel` | `""` | 只給子代理用的模型 |
 | `subAgentThinkingEffort` | `""` | 只給子代理用的思考量 |
-| `subAgentCleanup` | `archive-success` | 用完的子代理對話：`archive-success` / `archive-all` / `delete-success`（無法復原）/ `none` |
+| `subAgentCleanup` | `none` | 用完的子代理對話：未設定時不做任何處理；明確設定後可選 `archive-success` / `archive-all`。刪除功能要等可拋棄對話完成實機驗證後才會開放 |
 | `subPortBase` | `8810` | 子 agent 分頁用的第一個連接埠 |
 | `restartGapSeconds` | `20` | 重開對話前要等的秒數 |
 | `loadGlobalRules` | `true` | 讀取你的全域規則 |

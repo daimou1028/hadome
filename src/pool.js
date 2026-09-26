@@ -1,6 +1,6 @@
 const DEFAULT_BASE = 8810;
 
-const DEFAULT_MAX = 2;
+const DEFAULT_MAX = 0;
 
 const DEFAULT_STAGGER_MS = 1500;
 

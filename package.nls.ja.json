@@ -21,7 +21,7 @@
   "config.projectRulesLanguage.description": "ChatGPT の専案の指示へ書き込む決まりの言葉。上限 8,000 は**字数**なので、短く書ける言葉ほど多く入ります（同じ決まりの実測: 繁体字中国語 2,812 / 日本語 3,592 / 英語 6,778）。既定は画面と同じ言葉。",
   "config.language.description": "画面の言葉。既定の auto はエディターの表示言語に合わせるので、ふだんは触らなくてよい。エディターと違う言葉で出したい時だけ選ぶ。",
   "config.subAgents.description": "サブエージェントの agent を同時に何本まで動かすか。0 で使わない。サブエージェント 1 本につき chatgpt.com のタブが 1 枚開く。",
-  "config.subAgentCleanup.description": "終了したサブエージェントの対話をどう片づけるか。none = 何もしない、archive-success = 成功した時だけアーカイブ（既定。失敗は原因を追えるよう残す）、archive-all = 成否に関わらずアーカイブ、delete-success = 成功した時だけ削除（戻せない）。",
+  "config.subAgentCleanup.description": "終了したサブエージェントの対話をどう片づけるか。既定は none = 何もしない。明示設定した時だけ archive-success = 成功した時だけアーカイブ、archive-all = 成否に関わらずアーカイブ。削除は実機検証が済むまで使えない。",
   "config.subPortBase.description": "サブエージェントが使う待ち受けの番号の始まり。本数ぶん連番で使う。",
   "config.revealOnStart.description": "起動したら対話のパネルを自分で出す。自動で確かめる時に使う（既定は出さない）。",
   "config.allowedOutside.description": "ワークスペースの外で、触ってよい場所。「いつも許す」を押すと、そのフォルダがここに足される。**読むだけ**の許しです。書き換えは allowedOutsideWrite の方に入ります。",
@@ -93,8 +93,9 @@
   "config.browserPath.description": "`browser_*` がどのブラウザーを動かすか。空（既定）なら、相方の拡張機能を入れたブラウザーを探し、見つからなければ入っている物の先頭を使います。実行檔の道を書けば名指しできます。",
   "config.browserProfile.description": "そのブラウザーが使う設定ファイル。空（既定）なら Application Support の下の専用の物を使い、ふだん使いのブラウザーとは分けます——ツールはそれ以外には触りません。何を渡す事になるか分かっている時だけ替えてください。",
   "config.thinking.description": "送る前に ChatGPT の「思考」を入にします。**この切り替えは、いま開いているタブに その札が在って押せる時だけ画面に出ます**（chatgpt.com は 2026-08 以降 3 度 変わっているので、こちらでは決め打ちしません）。",
-  "config.model.description": "/backend-api/models のモデル slug（例: gpt-5-6-instant）。空なら触らず、タブで選んでいるモデルのまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
-  "config.thinkingEffort.description": "/backend-api/models の thinking_effort（例: min / standard / extended / max）。空なら触らず、タブで選んでいる値のまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
-  "config.subAgentModel.description": "サブエージェントのタブだけに効く /backend-api/models のモデル slug（例: gpt-5-6-instant）。空なら触らず、そのタブで選んでいるモデルのまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
-  "config.subAgentThinkingEffort.description": "サブエージェントのタブだけに効く /backend-api/models の thinking_effort（例: min / standard / extended / max）。空なら触らず、そのタブで選んでいる値のまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。"
+  "config.model.description": "/backend-api/models のモデル slug（例: gpt-5-6）。空なら触らず、タブで選んでいるモデルのまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
+  "config.thinkingEffort.description": "/backend-api/models の thinking_effort（相手が返す値。モデルによっては空で、その時は選べません）。空なら触らず、タブで選んでいる値のまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
+  "config.subAgentModel.description": "サブエージェントのタブだけに効く /backend-api/models のモデル slug（例: gpt-5-6）。空なら触らず、そのタブで選んでいるモデルのまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
+  "config.subAgentThinkingEffort.description": "サブエージェントのタブだけに効く /backend-api/models の thinking_effort（相手が返す値。モデルによっては空で、その時は選べません）。空なら触らず、そのタブで選んでいる値のまま送ります。選べない値はタブが送る前に断り、本文を替えずに送ります。",
+  "config.maxSendsPerHour.description": "1 時間あたりの最大送信回数。0 は無制限です。安全な上限を決めるのに十分な実測データがまだないため、既定値は 0 のままです。"
 }

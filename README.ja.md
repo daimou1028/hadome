@@ -194,13 +194,14 @@ npm run package:chrome   # → hadome-chrome-<版>.zip
 | `diagnosticsAfterEdit` | `true` | 直した後、増えた問題を返す |
 | `preventDoneWithOpenTodos` | `true` | やることが残っていたら終わらせない |
 | `maxTurns` | `0` | N 手番で止める（`0` は制限なし） |
+| `maxSendsPerHour` | `0` | 1 時間あたりの最大送信回数（`0` は制限なし） |
 | `contextWindow` | `0` | 見込みの文脈の広さを上書きする |
 | `subAgents` | `2` | 同時に動かしてよい下請けの数（0〜4） |
 | `model` | `""` | 主のモデル（空 = ChatGPT のタブで選んでいるまま） |
 | `thinkingEffort` | `""` | 主の思考の量（`min` / `standard` / `extended` / `max`） |
 | `subAgentModel` | `""` | 下請けだけのモデル |
 | `subAgentThinkingEffort` | `""` | 下請けだけの思考の量 |
-| `subAgentCleanup` | `archive-success` | 用の済んだ下請けの対話: `archive-success` / `archive-all` / `delete-success`（戻せない）/ `none` |
+| `subAgentCleanup` | `none` | 用の済んだ下請けの対話: 未設定なら何もしない。明示設定で `archive-success` / `archive-all` を選べる。削除は使い捨て対話で実機確認できるまで選べない |
 | `subPortBase` | `8810` | 下請けのタブに使う最初の口 |
 | `restartGapSeconds` | `20` | 対話を引き直すまで待つ秒数 |
 | `loadGlobalRules` | `true` | 全域の決まりを読む |
